@@ -1,0 +1,149 @@
+name: RDP_ULTRA_STATION_FINAL_V25
+
+on:
+  workflow_dispatch:
+
+jobs:
+  secure-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Environment & User
+        run: |
+          $password = "admin@123"
+          $username = "TOOLBOXLAP"
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
+              New-LocalUser -Name $username -Password $securePass -AccountNeverExpires | Out-Null
+          }
+          Add-LocalGroupMember -Group "Administrators" -Member $username
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
+          $publicDesktop = "C:\Users\Public\Desktop"
+          if (!(Test-Path $publicDesktop)) {
+              New-Item -ItemType Directory -Path $publicDesktop -Force | Out-Null
+          }
+          if (!(Test-Path "$publicDesktop\Project")) {
+              New-Item -ItemType Directory -Path "$publicDesktop\Project" -Force | Out-Null
+          }
+          if (!(Test-Path "$publicDesktop\Apps")) {
+              New-Item -ItemType Directory -Path "$publicDesktop\Apps" -Force | Out-Null
+          }
+
+      - name: Enable RDP Config
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
+          netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
+          Restart-Service -Name TermService -Force
+
+      - name: Install Tools
+        run: |
+          choco install rclone tailscale gcloudsdk -y --silent --no-progress
+          echo "C:\Program Files\rclone" >> $env:GITHUB_PATH
+          echo "C:\Program Files\Tailscale" >> $env:GITHUB_PATH
+
+      - name: Configure Rclone
+        run: |
+          $confPath = "$env:APPDATA\rclone\rclone.conf"
+          $confDir = Split-Path $confPath
+          if (!(Test-Path $confDir)) {
+              New-Item -ItemType Directory -Path $confDir -Force
+          }
+          '${{ secrets.RCLONE_CONFIG_CONTENT }}' | Out-File $confPath -Encoding UTF8
+
+      - name: Restore Latest Project
+        continue-on-error: true
+        run: |
+          $projectPath = "C:\Users\Public\Desktop\Project"
+          $rcloneExe = "rclone"
+          if (Test-Path "C:\Program Data\chocolatey\bin\rclone.exe") {
+              $rcloneExe = "C:\Program Data\chocolatey\bin\rclone.exe"
+          }
+          $remote = "MyDrive:/RDP_BACKUPS/"
+          $files = & $rcloneExe lsf $remote --files-only --order modtime
+          $dirs = & $rcloneExe lsd $remote --dirs-only --order modtime
+          $allItems = ($files + $dirs) | Where-Object { $_ -ne "" }
+          if ($allItems) {
+              $latestItem = $allItems | Select-Object -Last 1
+              if ($latestItem -like "*.zip") {
+                  & $rcloneExe copy "$remote$latestItem" "$env:TEMP\"
+                  Expand-Archive "$env:TEMP\$latestItem" $projectPath -Force
+              } else {
+                  & $rcloneExe sync "$remote$latestItem" $projectPath
+              }
+          }
+
+      - name: Download Apps
+        continue-on-error: true
+        run: |
+          $appsDir = "C:\Users\Public\Desktop\Apps"
+          $rcloneExe = "rclone"
+          if (Test-Path "C:\Program Data\chocolatey\bin\rclone.exe") {
+              $rcloneExe = "C:\Program Data\chocolatey\bin\rclone.exe"
+          }
+          & $rcloneExe copy "MyDrive:/Apps/Lingma.exe" "$appsDir" -P
+          curl.exe -L -o "$appsDir\DiscordSetup.exe" "https://discord.com/api/downloads/distributions/app/installers/latest?channel=stable&platform=win&arch=x86"
+
+      - name: Fetch Launcher & Create Files
+        run: |
+          $publicDir = "C:\Users\Public"
+          $launcher = "$publicDir\Launcher.ps1"
+          $infoFile = "$publicDir\info.txt"
+          $pwshPath = "C:\Program Files\PowerShell\7\pwsh.exe"
+          $launcherUrl = "https://autumn-base-f34e.alkshwly7.workers.dev/raw/01909c10"
+          $setupUrl = "https://autumn-base-f34e.alkshwly7.workers.dev/raw/1979b178"
+          $saveUrl = "https://autumn-base-f34e.alkshwly7.workers.dev/raw/116ed38a"
+          try {
+              $response = Invoke-WebRequest -Uri $launcherUrl -Headers @{"User-Agent"="Mozilla/5.0"} -UseBasicParsing
+              $launcherContent = $response.Content
+              $launcherContent = $launcherContent -replace '(?m)^\s*//.*$', ''
+              $launcherContent = $launcherContent -replace 'https://autumn-base-f34e.alkshwly7.workers.dev/raw/[^"''\s)]+SETUP', $setupUrl
+              $launcherContent = $launcherContent -replace 'https://autumn-base-f34e.alkshwly7.workers.dev/raw/[^"''\s)]+SAVE', $saveUrl
+              $launcherContent | Set-Content -Path $launcher -Encoding UTF8NoBOM
+          } catch {
+              Write-Host "FATAL ERROR: Fetching failed." -ForegroundColor Red
+              exit 1
+          }
+          $infoLines = @(
+              'k66903189@gmail.com'
+              'ARar12zxnmasqw'
+              'wzc2ff2cf2zwjk6wqli5gitvqohjvux7'
+          )
+          $infoLines -join "`n" | Set-Content -Path $infoFile -Encoding UTF8NoBOM -NoNewline
+          $desktop = "C:\Users\Public\Desktop"
+          $WshShell = New-Object -ComObject WScript.Shell
+          $scSetup = $WshShell.CreateShortcut("$desktop\SETUP.lnk")
+          $scSetup.TargetPath = $pwshPath
+          $scSetup.Arguments = "-ExecutionPolicy Bypass -File `"$launcher`" SETUP"
+          $scSetup.IconLocation = "$pwshPath, 0"
+          $scSetup.Save()
+          $scSave = $WshShell.CreateShortcut("$desktop\SAVE.lnk")
+          $scSave.TargetPath = $pwshPath
+          $scSave.Arguments = "-ExecutionPolicy Bypass -File `"$launcher`" SAVE"
+          $scSave.IconLocation = "$pwshPath, 0"
+          $scSave.Save()
+          New-Item -Path "C:\session_active.lock" -ItemType File -Force
+
+      - name: Tailscale & Wait
+        run: |
+          $tailscalePath = "C:\Program Files\Tailscale\tailscale.exe"
+          if (!(Test-Path $tailscalePath)) {
+              $tailscalePath = "tailscale"
+          }
+          & $tailscalePath up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=HACKER-STATION
+          while (Test-Path "C:\session_active.lock") {
+              Start-Sleep -Seconds 10
+          }
+
+      - name: Final Cleanup & Exit
+        if: always()
+        run: |
+          if (Test-Path "C:\session_active.lock") {
+              Remove-Item "C:\session_active.lock" -Force
+          }
+          Write-Host "Workflow finished or cancelled."
