@@ -51,53 +51,50 @@ jobs:
         shell: pwsh
         run: |
           $configContent = '${{ secrets.RCLONE_CONFIG_CONTENT }}'
-          
-          # 1. إنشاء الملف في AppData (لمستخدم الـ Runner الحالي)
           $confDir = Join-Path $env:APPDATA "rclone"
           if (!(Test-Path $confDir)) {
               New-Item -ItemType Directory -Path $confDir -Force | Out-Null
           }
           Set-Content -Path (Join-Path $confDir "rclone.conf") -Value $configContent -Encoding UTF8
-          Set-Content -Path (Join-Path $confDir "save.txt") -Value $configContent -Encoding UTF8 -NoNewline
-          
-          # 2. إنشاء الملف في المسار العام (C:\Users\Public) لضمان وصول السكربتات إليه
           $publicSavePath = "C:\Users\Public\save.txt"
           Set-Content -Path $publicSavePath -Value $configContent -Encoding UTF8 -NoNewline
-          
-          Write-Host "✅ Created rclone.conf in AppData" -ForegroundColor Green
-          Write-Host "✅ Created save.txt in C:\Users\Public" -ForegroundColor Green
+          Write-Host "✅ Configured Rclone and created save.txt" -ForegroundColor Green
 
-      - name: Restore Latest Project
+      - name: Restore Latest Project ZIP
         continue-on-error: true
         run: |
           $projectPath = "C:\Users\Public\Desktop\Project"
-          $rcloneExe = "rclone"
-          if (Test-Path "C:\ProgramData\Chocolatey\bin\rclone.exe") {
-              $rcloneExe = "C:\ProgramData\Chocolatey\bin\rclone.exe"
-          }
-          $remote = "MyDrive:/RDP_BACKUPS/"
-          $files = Invoke-Expression "& `$rcloneExe lsf `$remote --files-only --order modtime" 2>&1
-          $allItems = $files | Where-Object { $_ -ne "" }
-          if ($allItems) {
-              $latestItem = $allItems | Select-Object -Last 1
-              if ($latestItem -like "*.zip") {
-                  Invoke-Expression "& `$rcloneExe copy `$remote\$latestItem `$env:TEMP\" -P
-                  Expand-Archive "$env:TEMP\$latestItem" -DestinationPath $projectPath -Force
-              } else {
-                  Invoke-Expression "& `$rcloneExe sync `$remote\$latestItem `$projectPath" -P
-              }
-              Write-Host "✅ تم استعادة المشروع الأحدث" -ForegroundColor Green
+          $remote = "MyDrive:/RDP_BACKUPS"
+          
+          Write-Host "🔍 جاري البحث عن آخر ملف ZIP في قوقل درايف..." -ForegroundColor Yellow
+          
+          # جلب قائمة الملفات مرتبة حسب تاريخ التعديل واختيار آخر ملف ZIP
+          $files = rclone lsf $remote --files-only --order modtime
+          $latestZip = $files | Where-Object { $_ -like "*.zip" } | Select-Object -Last 1
+          
+          if ($latestZip) {
+              Write-Host "🚀 جاري تحميل وفك ضغط: $latestZip" -ForegroundColor Cyan
+              $tempZip = "$env:TEMP\latest_project.zip"
+              
+              # تحميل الملف
+              rclone copy "$remote/$latestZip" "$env:TEMP" --progress
+              Rename-Item "$env:TEMP\$latestZip" "latest_project.zip" -Force
+              
+              # فك الضغط تلقائياً
+              Expand-Archive -Path $tempZip -DestinationPath $projectPath -Force
+              Remove-Item $tempZip -Force
+              
+              Write-Host "✅ تم استعادة المشروع وفك ضغطه بنجاح!" -ForegroundColor Green
+          } else {
+              Write-Host "⚠️ لم يتم العثور على أي ملفات ZIP للتحميل." -ForegroundColor Red
           }
 
       - name: Download Apps
         continue-on-error: true
         run: |
           $appsDir = "C:\Users\Public\Desktop\Apps"
-          $rcloneExe = "rclone"
-          if (Test-Path "C:\ProgramData\Chocolatey\bin\rclone.exe") {
-              $rcloneExe = "C:\ProgramData\Chocolatey\bin\rclone.exe"
-          }
-          Invoke-Expression "& `$rcloneExe copy MyDrive:/Apps/Lingma.exe `$appsDir" -P
+          # استخدام rclone مباشرة لتجنب أخطاء Invoke-Expression
+          rclone copy "MyDrive:/Apps/Lingma.exe" "$appsDir" --progress
           curl.exe -L -o "$appsDir\DiscordSetup.exe" "https://discord.com/api/downloads/distributions/app/installers/latest?channel=stable&platform=win&arch=x86"
 
       - name: Fetch Launcher & Create Files
@@ -112,24 +109,17 @@ jobs:
               $webClient = New-Object System.Net.WebClient
               $webClient.Encoding = [System.Text.Encoding]::UTF8
               $rawContent = $webClient.DownloadString($url + "?t=" + (Get-Date).Ticks)
-              
               $cleanContent = $rawContent -replace '(?m)^(\s*)//.*$', '$1'
               $cleanContent | Set-Content -Path $launcher -Encoding UTF8 -NoNewline
-              Write-Host "✅ تم تحميل Launcher.ps1 وتحديثه بنجاح" -ForegroundColor Green
           } catch {
-              Write-Host "❌ FATAL ERROR: Launcher download failed." -ForegroundColor Red
               exit 1
           }
           
-          $infoLines = @(
-              "k66903189@gmail.com",
-              "ARar12zxnmasqw",
-              "wzc2ff2cf2zwjk6wqli5gitvqohjvux7"
-          )
+          $infoLines = @("k66903189@gmail.com","ARar12zxnmasqw","wzc2ff2cf2zwjk6wqli5gitvqohjvux7")
           $infoLines | Set-Content -Path $infoFile -Encoding UTF8 -NoNewline
           
-          $desktop = "C:\Users\Public\Desktop"
           $WshShell = New-Object -ComObject WScript.Shell
+          $desktop = "C:\Users\Public\Desktop"
           
           $scSetup = $WshShell.CreateShortcut("$desktop\SETUP.lnk")
           $scSetup.TargetPath = $pwshPath
@@ -142,22 +132,13 @@ jobs:
           $scSave.Save()
           
           New-Item -Path "C:\session_active.lock" -ItemType File -Force | Out-Null
-          Write-Host "✅ تم إنشاء الاختصارات والملفات بنجاح" -ForegroundColor Green
 
       - name: Tailscale & Wait
         run: |
-          $tailscalePath = "C:\Program Files\Tailscale\tailscale.exe"
-          if (!(Test-Path $tailscalePath)) { $tailscalePath = "tailscale" }
-          Invoke-Expression "& `$tailscalePath up --authkey='${{ secrets.TAILSCALE_AUTH_KEY }}' --hostname='HACKER-STATION'"
-          Write-Host "🔗 Tailscale Connected" -ForegroundColor Green
-          
-          while (Test-Path "C:\session_active.lock") {
-              Start-Sleep -Seconds 10
-          }
-          Write-Host "⏳ Session Closed." -ForegroundColor Cyan
+          tailscale up --authkey='${{ secrets.TAILSCALE_AUTH_KEY }}' --hostname='HACKER-STATION'
+          while (Test-Path "C:\session_active.lock") { Start-Sleep -Seconds 10 }
 
       - name: Final Cleanup & Exit
         if: always()
         run: |
           if (Test-Path "C:\session_active.lock") { Remove-Item "C:\session_active.lock" -Force }
-          Write-Host "✅ Workflow finished." -ForegroundColor Green
