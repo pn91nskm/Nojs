@@ -12,6 +12,28 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Set Chrome as Default Browser
+        run: |
+          Write-Host "🌐 تعيين Google Chrome كمتصفح افتراضي لجميع المستخدمين..." -ForegroundColor Yellow
+          $ChromePath = "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe"
+          if (!(Test-Path $ChromePath)) { $ChromePath = "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe" }
+          
+          if (Test-Path $ChromePath) {
+              $Paths = @(
+                  "HKLM:\SOFTWARE\Classes\http\shell\open\command",
+                  "HKLM:\SOFTWARE\Classes\https\shell\open\command",
+                  "HKLM:\SOFTWARE\Classes\.html\OpenWithProgids",
+                  "HKLM:\SOFTWARE\Clients\StartMenuInternet\Google Chrome\shell\open\command"
+              )
+              # أوامر التعيين عبر السجل لضمان الشمولية
+              $val = "`"$ChromePath`" -- `"%1`""
+              Set-ItemProperty -Path "HKLM:\SOFTWARE\Classes\http\shell\open\command" -Name "(Default)" -Value $val -ErrorAction SilentlyContinue
+              Set-ItemProperty -Path "HKLM:\SOFTWARE\Classes\https\shell\open\command" -Name "(Default)" -Value $val -ErrorAction SilentlyContinue
+              Write-Host "✅ تم تعيين كروم كمتصفح افتراضي." -ForegroundColor Green
+          } else {
+              Write-Host "⚠️ كروم غير مثبت حالياً، سيتم التعيين عند التثبيت." -ForegroundColor Red
+          }
+
       - name: Setup Environment & User
         run: |
           $password = "admin@123"
@@ -55,38 +77,18 @@ jobs:
         run: |
           $projectBase = "C:\Users\Public\Desktop\Project"
           $remote = "MyDrive:/RDP_BACKUPS"
-          
-          Write-Host "🔍 البحث عن آخر ملف ZIP يبدأ بـ rfcity-..." -ForegroundColor Yellow
-          
           $latestZip = rclone lsf $remote --files-only | 
                        Where-Object { $_ -match '(?i)^rfcity-.*\.zip$' } | 
-                       Sort-Object | 
-                       Select-Object -Last 1
+                       Sort-Object | Select-Object -Last 1
           
           if ($latestZip) {
-              Write-Host "✅ تم العثور على: $latestZip" -ForegroundColor Green
-              
-              # تحديد اسم المجلد الجديد (إزالة .zip من الاسم)
               $folderName = $latestZip -replace '\.zip$', ''
               $targetPath = Join-Path $projectBase $folderName
-              
-              # إنشاء المجلد إذا لم يكن موجوداً
-              if (!(Test-Path $targetPath)) {
-                  New-Item -ItemType Directory -Path $targetPath -Force | Out-Null
-              }
-              
-              Write-Host "🚀 جاري التحميل والفك في المجلد: $folderName" -ForegroundColor Cyan
+              if (!(Test-Path $targetPath)) { New-Item -ItemType Directory -Path $targetPath -Force | Out-Null }
               rclone copy "$remote/$latestZip" "$env:TEMP" --progress
-              
-              $zipFullPath = Join-Path "$env:TEMP" $latestZip
-              
-              # فك الضغط داخل المجلد المخصص
-              Expand-Archive -Path $zipFullPath -DestinationPath $targetPath -Force
-              
-              Remove-Item $zipFullPath -Force
-              Write-Host "✨ تم استعادة المشروع بنجاح داخل مجلد $folderName" -ForegroundColor Green
-          } else {
-              Write-Host "⚠️ لم يتم العثور على ملفات تطابق النمط." -ForegroundColor Red
+              Expand-Archive -Path (Join-Path "$env:TEMP" $latestZip) -DestinationPath $targetPath -Force
+              Remove-Item (Join-Path "$env:TEMP" $latestZip) -Force
+              Write-Host "✅ تم استعادة المشروع في مجلد $folderName" -ForegroundColor Green
           }
 
       - name: Download Apps
@@ -106,14 +108,11 @@ jobs:
               $cleanContent = $rawContent -replace '(?m)^(\s*)//.*$', '$1'
               $cleanContent | Set-Content -Path $launcher -Encoding UTF8 -NoNewline
           } catch { exit 1 }
-          
           $infoLines = @("k66903189@gmail.com","ARar12zxnmasqw","wzc2ff2cf2zwjk6wqli5gitvqohjvux7")
           $infoLines | Set-Content -Path "$publicDir\info.txt" -Encoding UTF8 -NoNewline
-          
           $WshShell = New-Object -ComObject WScript.Shell
           $pwsh = "C:\Program Files\PowerShell\7\pwsh.exe"
-          $targets = @("SETUP", "SAVE")
-          foreach ($t in $targets) {
+          foreach ($t in @("SETUP", "SAVE")) {
               $sc = $WshShell.CreateShortcut("C:\Users\Public\Desktop\$t.lnk")
               $sc.TargetPath = $pwsh
               $sc.Arguments = "-ExecutionPolicy Bypass -File `"$launcher`" $t"
@@ -124,11 +123,8 @@ jobs:
       - name: Tailscale & Wait
         run: |
           $tsPath = "C:\Program Files\Tailscale\tailscale.exe"
-          if (Test-Path $tsPath) {
-              & "$tsPath" up --authkey='${{ secrets.TAILSCALE_AUTH_KEY }}' --hostname='HACKER-STATION'
-          } else {
-              tailscale up --authkey='${{ secrets.TAILSCALE_AUTH_KEY }}' --hostname='HACKER-STATION'
-          }
+          if (Test-Path $tsPath) { & "$tsPath" up --authkey='${{ secrets.TAILSCALE_AUTH_KEY }}' --hostname='HACKER-STATION' }
+          else { tailscale up --authkey='${{ secrets.TAILSCALE_AUTH_KEY }}' --hostname='HACKER-STATION' }
           while (Test-Path "C:\session_active.lock") { Start-Sleep -Seconds 10 }
 
       - name: Final Cleanup
