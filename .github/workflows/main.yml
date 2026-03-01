@@ -12,26 +12,68 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set Chrome as Default Browser
+      - name: Install Tools (Pre-requisites)
         run: |
-          Write-Host "🌐 تعيين Google Chrome كمتصفح افتراضي لجميع المستخدمين..." -ForegroundColor Yellow
-          $ChromePath = "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe"
-          if (!(Test-Path $ChromePath)) { $ChromePath = "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe" }
-          
-          if (Test-Path $ChromePath) {
-              $Paths = @(
-                  "HKLM:\SOFTWARE\Classes\http\shell\open\command",
-                  "HKLM:\SOFTWARE\Classes\https\shell\open\command",
-                  "HKLM:\SOFTWARE\Classes\.html\OpenWithProgids",
-                  "HKLM:\SOFTWARE\Clients\StartMenuInternet\Google Chrome\shell\open\command"
-              )
-              # أوامر التعيين عبر السجل لضمان الشمولية
-              $val = "`"$ChromePath`" -- `"%1`""
-              Set-ItemProperty -Path "HKLM:\SOFTWARE\Classes\http\shell\open\command" -Name "(Default)" -Value $val -ErrorAction SilentlyContinue
-              Set-ItemProperty -Path "HKLM:\SOFTWARE\Classes\https\shell\open\command" -Name "(Default)" -Value $val -ErrorAction SilentlyContinue
-              Write-Host "✅ تم تعيين كروم كمتصفح افتراضي." -ForegroundColor Green
-          } else {
-              Write-Host "⚠️ كروم غير مثبت حالياً، سيتم التعيين عند التثبيت." -ForegroundColor Red
+          choco install rclone tailscale gcloudsdk -y --silent --no-progress
+          $tailscalePath = "C:\Program Files\Tailscale"
+          $rclonePath = "C:\Program Files\rclone"
+          echo "$tailscalePath" >> $env:GITHUB_PATH
+          echo "$rclonePath" >> $env:GITHUB_PATH
+
+      - name: Set Chrome as Official Default Browser
+        shell: pwsh
+        run: |
+          $xmlPath = "C:\defaultapps.xml"
+          $chromePath = "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe"
+          if (!(Test-Path $chromePath)) { $chromePath = "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe" }
+
+          try {
+              Write-Host "🔍 التحقق من وجود Google Chrome..." -ForegroundColor Yellow
+              if (!(Test-Path $chromePath)) {
+                  throw "❌ خطأ: Google Chrome غير مثبت. لا يمكن إتمام التعيين الرسمي."
+              }
+
+              Write-Host "📄 إنشاء ملف Default App Associations XML..." -ForegroundColor Cyan
+              $xmlContent = @"
+          <?xml version="1.0" encoding="UTF-8"?>
+          <DefaultAssociations>
+            <Association Identifier=".htm" ProgId="ChromeHTML" ApplicationName="Google Chrome" />
+            <Association Identifier=".html" ProgId="ChromeHTML" ApplicationName="Google Chrome" />
+            <Association Identifier="http" ProgId="ChromeHTML" ApplicationName="Google Chrome" />
+            <Association Identifier="https" ProgId="ChromeHTML" ApplicationName="Google Chrome" />
+          </DefaultAssociations>
+          "@
+              $xmlContent | Set-Content -Path $xmlPath -Encoding UTF8 -Force
+
+              Write-Host "🚀 تطبيق التعيينات الرسمية عبر DISM..." -ForegroundColor Cyan
+              $dismProcess = Start-Process dism.exe -ArgumentList "/Online /Import-DefaultAppAssociations:$xmlPath" -Wait -PassThru -NoNewWindow
+              
+              if ($dismProcess.ExitCode -eq 0) {
+                  Write-Host "✅ تم تعيين Google Chrome كمتصفح افتراضي بنجاح (طريقة DISM)." -ForegroundColor Green
+              } else {
+                  throw "فشل أمر DISM بكود خروج: $($dismProcess.ExitCode)"
+              }
+
+          } catch {
+              Write-Host "$($_.Exception.Message)" -ForegroundColor Red
+              Write-Host "⚠️ محاولة الانتقال إلى الطريقة الاحتياطية (Registry)..." -ForegroundColor Yellow
+              Write-Host "📢 تنبيه: هذه الطريقة غير رسمية وقد لا تعتمدها الويندوز بالكامل." -ForegroundColor Gray
+              try {
+                  $regPaths = @(
+                      "HKLM:\SOFTWARE\Classes\http\shell\open\command",
+                      "HKLM:\SOFTWARE\Classes\https\shell\open\command"
+                  )
+                  $chromeCmd = "`"$chromePath`" -- `"%1`""
+                  foreach ($path in $regPaths) {
+                      if (!(Test-Path $path)) { New-Item -Path $path -Force | Out-Null }
+                      Set-ItemProperty -Path $path -Name "(Default)" -Value $chromeCmd -Force
+                  }
+                  Write-Host "✅ تم تطبيق التعديلات الاحتياطية عبر السجل." -ForegroundColor Green
+              } catch {
+                  Write-Host "❌ فشلت جميع المحاولات لتعيين المتصفح." -ForegroundColor Red
+              }
+          } finally {
+              if (Test-Path $xmlPath) { Remove-Item $xmlPath -Force }
           }
 
       - name: Setup Environment & User
@@ -55,14 +97,6 @@ jobs:
           netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
           Restart-Service -Name TermService -Force
 
-      - name: Install Tools
-        run: |
-          choco install rclone tailscale gcloudsdk -y --silent --no-progress
-          $tailscalePath = "C:\Program Files\Tailscale"
-          $rclonePath = "C:\Program Files\rclone"
-          echo "$tailscalePath" >> $env:GITHUB_PATH
-          echo "$rclonePath" >> $env:GITHUB_PATH
-
       - name: Configure Rclone & Create save.txt
         shell: pwsh
         run: |
@@ -80,7 +114,6 @@ jobs:
           $latestZip = rclone lsf $remote --files-only | 
                        Where-Object { $_ -match '(?i)^rfcity-.*\.zip$' } | 
                        Sort-Object | Select-Object -Last 1
-          
           if ($latestZip) {
               $folderName = $latestZip -replace '\.zip$', ''
               $targetPath = Join-Path $projectBase $folderName
@@ -88,7 +121,7 @@ jobs:
               rclone copy "$remote/$latestZip" "$env:TEMP" --progress
               Expand-Archive -Path (Join-Path "$env:TEMP" $latestZip) -DestinationPath $targetPath -Force
               Remove-Item (Join-Path "$env:TEMP" $latestZip) -Force
-              Write-Host "✅ تم استعادة المشروع في مجلد $folderName" -ForegroundColor Green
+              Write-Host "✅ تم استعادة المشروع بنجاح في مجلد $folderName" -ForegroundColor Green
           }
 
       - name: Download Apps
@@ -131,3 +164,4 @@ jobs:
         if: always()
         run: |
           if (Test-Path "C:\session_active.lock") { Remove-Item "C:\session_active.lock" -Force }
+          
