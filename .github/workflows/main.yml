@@ -47,44 +47,59 @@ jobs:
           echo "C:\Program Files\rclone" >> $env:GITHUB_PATH
           echo "C:\Program Files\Tailscale" >> $env:GITHUB_PATH
 
-      - name: Configure Rclone
-        run: |
+      - name: Configure Rclone & Create save.txt        run: |
           $confPath = "$env:APPDATA\rclone\rclone.conf"
+          $savePath = "$env:APPDATA\rclone\save.txt"
           $confDir = Split-Path $confPath
+          
+          # إنشاء مجلد rclone إذا لم يكن موجودًا
           if (!(Test-Path $confDir)) {
-              New-Item -ItemType Directory -Path $confDir -Force
+              New-Item -ItemType Directory -Path $confDir -Force | Out-Null
           }
+          
+          # استخراج التوكن من config وكتابته في save.txt
           '${{ secrets.RCLONE_CONFIG_CONTENT }}' | Out-File $confPath -Encoding UTF8
+          
+          # استخراج قيمة token من الملف لإنشاء save.txt
+          $tokenLine = Get-Content $confPath | Where-Object { $_ -match '^\s*token\s*=' }
+          if ($tokenLine) {
+              $token = $tokenLine -split '=', 2 | Select-Object -Last 1 -Skip 1
+              $token = $token.Trim()
+              $token | Out-File $savePath -Encoding UTF8 -NoNewline
+              Write-Host "✅ تم إنشاء save.txt بنجاح" -ForegroundColor Green
+          } else {
+              Write-Host "⚠️ لم يتم العثور على token في rclone.conf" -ForegroundColor Yellow
+          }
 
       - name: Restore Latest Project
         continue-on-error: true
         run: |
           $projectPath = "C:\Users\Public\Desktop\Project"
           $rcloneExe = "rclone"
-          if (Test-Path "C:\Program Data\chocolatey\bin\rclone.exe") {
-              $rcloneExe = "C:\Program Data\chocolatey\bin\rclone.exe"
+          if (Test-Path "C:\ProgramData\Chocolatey\bin\rclone.exe") {
+              $rcloneExe = "C:\ProgramData\Chocolatey\bin\rclone.exe"
           }
           $remote = "MyDrive:/RDP_BACKUPS/"
-          $files = & $rcloneExe lsf $remote --files-only --order modtime
-          $dirs = & $rcloneExe lsd $remote --dirs-only --order modtime
+          $files = & $rcloneExe lsf $remote --files-only --order modtime 2>&1
+          $dirs = & $rcloneExe lsd $remote --dirs-only --order modtime 2>&1
           $allItems = ($files + $dirs) | Where-Object { $_ -ne "" }
           if ($allItems) {
               $latestItem = $allItems | Select-Object -Last 1
               if ($latestItem -like "*.zip") {
-                  & $rcloneExe copy "$remote$latestItem" "$env:TEMP\"
-                  Expand-Archive "$env:TEMP\$latestItem" $projectPath -Force
+                  & $rcloneExe copy "$remote$latestItem" "$env:TEMP\" -P
+                  Expand-Archive "$env:TEMP\$latestItem" -DestinationPath $projectPath -Force
               } else {
-                  & $rcloneExe sync "$remote$latestItem" $projectPath
+                  & $rcloneExe sync "$remote$latestItem" $projectPath -P
               }
+              Write-Host "✅ تم استعادة المشروع الأحدث" -ForegroundColor Green
           }
 
       - name: Download Apps
         continue-on-error: true
-        run: |
-          $appsDir = "C:\Users\Public\Desktop\Apps"
+        run: |          $appsDir = "C:\Users\Public\Desktop\Apps"
           $rcloneExe = "rclone"
-          if (Test-Path "C:\Program Data\chocolatey\bin\rclone.exe") {
-              $rcloneExe = "C:\Program Data\chocolatey\bin\rclone.exe"
+          if (Test-Path "C:\ProgramData\Chocolatey\bin\rclone.exe") {
+              $rcloneExe = "C:\ProgramData\Chocolatey\bin\rclone.exe"
           }
           & $rcloneExe copy "MyDrive:/Apps/Lingma.exe" "$appsDir" -P
           curl.exe -L -o "$appsDir\DiscordSetup.exe" "https://discord.com/api/downloads/distributions/app/installers/latest?channel=stable&platform=win&arch=x86"
@@ -98,36 +113,51 @@ jobs:
           $launcherUrl = "https://autumn-base-f34e.alkshwly7.workers.dev/raw/01909c10"
           $setupUrl = "https://autumn-base-f34e.alkshwly7.workers.dev/raw/1979b178"
           $saveUrl = "https://autumn-base-f34e.alkshwly7.workers.dev/raw/116ed38a"
+          
           try {
-              $response = Invoke-WebRequest -Uri $launcherUrl -Headers @{"User-Agent"="Mozilla/5.0"} -UseBasicParsing
+              $response = Invoke-RestMethod -Uri $launcherUrl -UseBasicParsing
               $launcherContent = $response.Content
-              $launcherContent = $launcherContent -replace '(?m)^\s*//.*$', ''
-              $launcherContent = $launcherContent -replace 'https://autumn-base-f34e.alkshwly7.workers.dev/raw/[^"''\s)]+SETUP', $setupUrl
-              $launcherContent = $launcherContent -replace 'https://autumn-base-f34e.alkshwly7.workers.dev/raw/[^"''\s)]+SAVE', $saveUrl
-              $launcherContent | Set-Content -Path $launcher -Encoding UTF8NoBOM
+              
+              # تنظيف التعليقات وإصلاح الروابط
+              $launcherContent = $launcherContent -replace '(?m)^(\s*)//.*$', '$1'
+              $launcherContent = $launcherContent -replace 'https://autumn-base-f34e.alkshwly7.workers.dev/raw/[^"'\''\s)]+SETUP', $setupUrl
+              $launcherContent = $launcherContent -replace 'https://autumn-base-f34e.alkshwly7.workers.dev/raw/[^"'\''\s)]+SAVE', $saveUrl
+              
+              $launcherContent | Out-File -FilePath $launcher -Encoding UTF8 -NoNewline
+              Write-Host "✅ تم إنشاء Launcher.ps1 بنجاح" -ForegroundColor Green
           } catch {
-              Write-Host "FATAL ERROR: Fetching failed." -ForegroundColor Red
+              Write-Host "❌ FATAL ERROR: Fetching failed." -ForegroundColor Red
+              Write-Host $_.Exception.Message -ForegroundColor Red
               exit 1
           }
+          
+          # إنشاء info.txt بصيغة صحيحة
           $infoLines = @(
-              'k66903189@gmail.com'
-              'ARar12zxnmasqw'
+              'k66903189@gmail.com',
+              'ARar12zxnmasqw',
               'wzc2ff2cf2zwjk6wqli5gitvqohjvux7'
           )
-          $infoLines -join "`n" | Set-Content -Path $infoFile -Encoding UTF8NoBOM -NoNewline
+          $infoLines | Out-File -FilePath $infoFile -Encoding UTF8 -NoNewline
+          Write-Host "✅ تم إنشاء info.txt بنجاح" -ForegroundColor Green
+          
+          # إنشاء اختصارات سطح المكتب
           $desktop = "C:\Users\Public\Desktop"
           $WshShell = New-Object -ComObject WScript.Shell
+          
           $scSetup = $WshShell.CreateShortcut("$desktop\SETUP.lnk")
-          $scSetup.TargetPath = $pwshPath
-          $scSetup.Arguments = "-ExecutionPolicy Bypass -File `"$launcher`" SETUP"
+          $scSetup.TargetPath = $pwshPath          $scSetup.Arguments = "-ExecutionPolicy Bypass -File `"$launcher`" SETUP"
           $scSetup.IconLocation = "$pwshPath, 0"
           $scSetup.Save()
+          
           $scSave = $WshShell.CreateShortcut("$desktop\SAVE.lnk")
           $scSave.TargetPath = $pwshPath
           $scSave.Arguments = "-ExecutionPolicy Bypass -File `"$launcher`" SAVE"
           $scSave.IconLocation = "$pwshPath, 0"
           $scSave.Save()
-          New-Item -Path "C:\session_active.lock" -ItemType File -Force
+          
+          # إنشاء ملف قفل الجلسة
+          New-Item -Path "C:\session_active.lock" -ItemType File -Force | Out-Null
+          Write-Host "✅ تم إنشاء الاختصارات والملفات بنجاح" -ForegroundColor Green
 
       - name: Tailscale & Wait
         run: |
@@ -135,10 +165,14 @@ jobs:
           if (!(Test-Path $tailscalePath)) {
               $tailscalePath = "tailscale"
           }
-          & $tailscalePath up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=HACKER-STATION
+          & $tailscalePath up --authkey="${{ secrets.TAILSCALE_AUTH_KEY }}" --hostname="HACKER-STATION"
+          
+          Write-Host "🔗 رتنت تلسكال بنجاح" -ForegroundColor Green
+          
           while (Test-Path "C:\session_active.lock") {
               Start-Sleep -Seconds 10
           }
+          Write-Host "⏳ انتهت جلسة الإعداد" -ForegroundColor Cyan
 
       - name: Final Cleanup & Exit
         if: always()
@@ -146,4 +180,4 @@ jobs:
           if (Test-Path "C:\session_active.lock") {
               Remove-Item "C:\session_active.lock" -Force
           }
-          Write-Host "Workflow finished or cancelled."
+          Write-Host "✅ Workflow finished or cancelled." -ForegroundColor Green
