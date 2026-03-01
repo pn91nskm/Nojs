@@ -22,16 +22,8 @@ jobs:
           }
           Add-LocalGroupMember -Group "Administrators" -Member $username
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
-          $publicDesktop = "C:\Users\Public\Desktop"
-          if (!(Test-Path $publicDesktop)) {
-              New-Item -ItemType Directory -Path $publicDesktop -Force | Out-Null
-          }
-          if (!(Test-Path "$publicDesktop\Project")) {
-              New-Item -ItemType Directory -Path "$publicDesktop\Project" -Force | Out-Null
-          }
-          if (!(Test-Path "$publicDesktop\Apps")) {
-              New-Item -ItemType Directory -Path "$publicDesktop\Apps" -Force | Out-Null
-          }
+          $dirs = @("C:\Users\Public\Desktop", "C:\Users\Public\Desktop\Project", "C:\Users\Public\Desktop\Apps")
+          foreach ($dir in $dirs) { if (!(Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null } }
 
       - name: Enable RDP Config
         run: |
@@ -45,20 +37,16 @@ jobs:
         run: |
           choco install rclone tailscale gcloudsdk -y --silent --no-progress
           echo "C:\Program Files\rclone" >> $env:GITHUB_PATH
-          echo "C:\Program Files\Tailscale" >> $env:GITHUB_PATH
 
       - name: Configure Rclone & Create save.txt
         shell: pwsh
         run: |
           $configContent = '${{ secrets.RCLONE_CONFIG_CONTENT }}'
-          $confDir = Join-Path $env:APPDATA "rclone"
-          if (!(Test-Path $confDir)) {
-              New-Item -ItemType Directory -Path $confDir -Force | Out-Null
-          }
-          Set-Content -Path (Join-Path $confDir "rclone.conf") -Value $configContent -Encoding UTF8
-          $publicSavePath = "C:\Users\Public\save.txt"
-          Set-Content -Path $publicSavePath -Value $configContent -Encoding UTF8 -NoNewline
-          Write-Host "✅ Configured Rclone and created save.txt" -ForegroundColor Green
+          $confDir = "$env:APPDATA\rclone"
+          if (!(Test-Path $confDir)) { New-Item -ItemType Directory -Path $confDir -Force | Out-Null }
+          Set-Content -Path "$confDir\rclone.conf" -Value $configContent -Encoding UTF8
+          Set-Content -Path "C:\Users\Public\save.txt" -Value $configContent -Encoding UTF8 -NoNewline
+          Write-Host "✅ تم إعداد Rclone و save.txt بنجاح" -ForegroundColor Green
 
       - name: Restore Latest Project ZIP
         continue-on-error: true
@@ -66,79 +54,73 @@ jobs:
           $projectPath = "C:\Users\Public\Desktop\Project"
           $remote = "MyDrive:/RDP_BACKUPS"
           
-          Write-Host "🔍 جاري البحث عن آخر ملف ZIP في قوقل درايف..." -ForegroundColor Yellow
+          Write-Host "🔍 البحث عن آخر ملف ZIP يبدأ بـ rfcity-..." -ForegroundColor Yellow
           
-          # جلب قائمة الملفات مرتبة حسب تاريخ التعديل واختيار آخر ملف ZIP
-          $files = rclone lsf $remote --files-only --order modtime
-          $latestZip = $files | Where-Object { $_ -like "*.zip" } | Select-Object -Last 1
+          $latestZip = rclone lsf $remote --files-only | 
+                       Where-Object { $_ -match '(?i)^rfcity-.*\.zip$' } | 
+                       Sort-Object | 
+                       Select-Object -Last 1
           
           if ($latestZip) {
-              Write-Host "🚀 جاري تحميل وفك ضغط: $latestZip" -ForegroundColor Cyan
-              $tempZip = "$env:TEMP\latest_project.zip"
+              Write-Host "✅ تم العثور على النسخة الأحدث: $latestZip" -ForegroundColor Green
+              Write-Host "🚀 جاري التحميل والفك تلقائياً..." -ForegroundColor Cyan
               
-              # تحميل الملف
               rclone copy "$remote/$latestZip" "$env:TEMP" --progress
-              Rename-Item "$env:TEMP\$latestZip" "latest_project.zip" -Force
               
-              # فك الضغط تلقائياً
-              Expand-Archive -Path $tempZip -DestinationPath $projectPath -Force
-              Remove-Item $tempZip -Force
+              $zipFullPath = Join-Path "$env:TEMP" $latestZip
+              Expand-Archive -Path $zipFullPath -DestinationPath $projectPath -Force
               
-              Write-Host "✅ تم استعادة المشروع وفك ضغطه بنجاح!" -ForegroundColor Green
+              Remove-Item $zipFullPath -Force
+              Write-Host "✨ تم استعادة مشروعك بنجاح في مجلد Project" -ForegroundColor Green
           } else {
-              Write-Host "⚠️ لم يتم العثور على أي ملفات ZIP للتحميل." -ForegroundColor Red
+              Write-Host "⚠️ لم يتم العثور على أي ملف يطابق النمط rfcity-*.zip" -ForegroundColor Red
           }
 
       - name: Download Apps
         continue-on-error: true
         run: |
           $appsDir = "C:\Users\Public\Desktop\Apps"
-          # استخدام rclone مباشرة لتجنب أخطاء Invoke-Expression
           rclone copy "MyDrive:/Apps/Lingma.exe" "$appsDir" --progress
           curl.exe -L -o "$appsDir\DiscordSetup.exe" "https://discord.com/api/downloads/distributions/app/installers/latest?channel=stable&platform=win&arch=x86"
 
       - name: Fetch Launcher & Create Files
         run: |
           $publicDir = "C:\Users\Public"
-          $launcher = Join-Path $publicDir "Launcher.ps1"
-          $infoFile = Join-Path $publicDir "info.txt"
-          $pwshPath = "C:\Program Files\PowerShell\7\pwsh.exe"
+          $launcher = "$publicDir\Launcher.ps1"
           
           try {
               $url = "https://autumn-base-f34e.alkshwly7.workers.dev/raw/01909c10"
-              $webClient = New-Object System.Net.WebClient
-              $webClient.Encoding = [System.Text.Encoding]::UTF8
-              $rawContent = $webClient.DownloadString($url + "?t=" + (Get-Date).Ticks)
+              $rawContent = (New-Object System.Net.WebClient).DownloadString($url + "?t=" + (Get-Date).Ticks)
               $cleanContent = $rawContent -replace '(?m)^(\s*)//.*$', '$1'
               $cleanContent | Set-Content -Path $launcher -Encoding UTF8 -NoNewline
-          } catch {
-              exit 1
+          } catch { 
+              Write-Host "❌ فشل تحميل السكربت من العامل (Worker)" -ForegroundColor Red
+              exit 1 
           }
           
           $infoLines = @("k66903189@gmail.com","ARar12zxnmasqw","wzc2ff2cf2zwjk6wqli5gitvqohjvux7")
-          $infoLines | Set-Content -Path $infoFile -Encoding UTF8 -NoNewline
+          $infoLines | Set-Content -Path "$publicDir\info.txt" -Encoding UTF8 -NoNewline
           
           $WshShell = New-Object -ComObject WScript.Shell
-          $desktop = "C:\Users\Public\Desktop"
-          
-          $scSetup = $WshShell.CreateShortcut("$desktop\SETUP.lnk")
-          $scSetup.TargetPath = $pwshPath
-          $scSetup.Arguments = "-ExecutionPolicy Bypass -File `"$launcher`" SETUP"
-          $scSetup.Save()
-          
-          $scSave = $WshShell.CreateShortcut("$desktop\SAVE.lnk")
-          $scSave.TargetPath = $pwshPath
-          $scSave.Arguments = "-ExecutionPolicy Bypass -File `"$launcher`" SAVE"
-          $scSave.Save()
-          
+          $pwsh = "C:\Program Files\PowerShell\7\pwsh.exe"
+          $targets = @("SETUP", "SAVE")
+          foreach ($t in $targets) {
+              $sc = $WshShell.CreateShortcut("C:\Users\Public\Desktop\$t.lnk")
+              $sc.TargetPath = $pwsh
+              $sc.Arguments = "-ExecutionPolicy Bypass -File `"$launcher`" $t"
+              $sc.Save()
+          }
           New-Item -Path "C:\session_active.lock" -ItemType File -Force | Out-Null
+          Write-Host "✅ تم إنشاء اختصارات الدخول والحفظ" -ForegroundColor Green
 
       - name: Tailscale & Wait
         run: |
           tailscale up --authkey='${{ secrets.TAILSCALE_AUTH_KEY }}' --hostname='HACKER-STATION'
+          Write-Host "🔗 Tailscale متصل. RDP جاهز للاستخدام." -ForegroundColor Green
           while (Test-Path "C:\session_active.lock") { Start-Sleep -Seconds 10 }
 
-      - name: Final Cleanup & Exit
+      - name: Final Cleanup
         if: always()
         run: |
           if (Test-Path "C:\session_active.lock") { Remove-Item "C:\session_active.lock" -Force }
+          Write-Host "✅ انتهت الجلسة وتم التنظيف." -ForegroundColor Green
