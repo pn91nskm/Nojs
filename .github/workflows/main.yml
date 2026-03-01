@@ -36,7 +36,6 @@ jobs:
       - name: Install Tools
         run: |
           choco install rclone tailscale gcloudsdk -y --silent --no-progress
-          # إضافة المسارات يدوياً لضمان العمل في نفس الجلسة
           $tailscalePath = "C:\Program Files\Tailscale"
           $rclonePath = "C:\Program Files\rclone"
           echo "$tailscalePath" >> $env:GITHUB_PATH
@@ -54,12 +53,11 @@ jobs:
       - name: Restore Latest Project ZIP
         continue-on-error: true
         run: |
-          $projectPath = "C:\Users\Public\Desktop\Project"
+          $projectBase = "C:\Users\Public\Desktop\Project"
           $remote = "MyDrive:/RDP_BACKUPS"
           
           Write-Host "🔍 البحث عن آخر ملف ZIP يبدأ بـ rfcity-..." -ForegroundColor Yellow
           
-          # جلب الملفات والبحث عن أحدث ملف يبدأ بـ rfcity-
           $latestZip = rclone lsf $remote --files-only | 
                        Where-Object { $_ -match '(?i)^rfcity-.*\.zip$' } | 
                        Sort-Object | 
@@ -67,12 +65,26 @@ jobs:
           
           if ($latestZip) {
               Write-Host "✅ تم العثور على: $latestZip" -ForegroundColor Green
+              
+              # تحديد اسم المجلد الجديد (إزالة .zip من الاسم)
+              $folderName = $latestZip -replace '\.zip$', ''
+              $targetPath = Join-Path $projectBase $folderName
+              
+              # إنشاء المجلد إذا لم يكن موجوداً
+              if (!(Test-Path $targetPath)) {
+                  New-Item -ItemType Directory -Path $targetPath -Force | Out-Null
+              }
+              
+              Write-Host "🚀 جاري التحميل والفك في المجلد: $folderName" -ForegroundColor Cyan
               rclone copy "$remote/$latestZip" "$env:TEMP" --progress
               
               $zipFullPath = Join-Path "$env:TEMP" $latestZip
-              Expand-Archive -Path $zipFullPath -DestinationPath $projectPath -Force
+              
+              # فك الضغط داخل المجلد المخصص
+              Expand-Archive -Path $zipFullPath -DestinationPath $targetPath -Force
+              
               Remove-Item $zipFullPath -Force
-              Write-Host "✨ تم فك الضغط بنجاح!" -ForegroundColor Green
+              Write-Host "✨ تم استعادة المشروع بنجاح داخل مجلد $folderName" -ForegroundColor Green
           } else {
               Write-Host "⚠️ لم يتم العثور على ملفات تطابق النمط." -ForegroundColor Red
           }
@@ -88,11 +100,9 @@ jobs:
         run: |
           $publicDir = "C:\Users\Public"
           $launcher = "$publicDir\Launcher.ps1"
-          
           try {
               $url = "https://autumn-base-f34e.alkshwly7.workers.dev/raw/01909c10"
               $rawContent = (New-Object System.Net.WebClient).DownloadString($url + "?t=" + (Get-Date).Ticks)
-              # إزالة التعليقات //
               $cleanContent = $rawContent -replace '(?m)^(\s*)//.*$', '$1'
               $cleanContent | Set-Content -Path $launcher -Encoding UTF8 -NoNewline
           } catch { exit 1 }
@@ -110,18 +120,15 @@ jobs:
               $sc.Save()
           }
           New-Item -Path "C:\session_active.lock" -ItemType File -Force | Out-Null
-          Write-Host "✅ الاختصارات جاهزة" -ForegroundColor Green
 
       - name: Tailscale & Wait
         run: |
-          # محاولة التشغيل باستخدام المسار الكامل لتجنب خطأ "Not Recognized"
           $tsPath = "C:\Program Files\Tailscale\tailscale.exe"
           if (Test-Path $tsPath) {
               & "$tsPath" up --authkey='${{ secrets.TAILSCALE_AUTH_KEY }}' --hostname='HACKER-STATION'
           } else {
               tailscale up --authkey='${{ secrets.TAILSCALE_AUTH_KEY }}' --hostname='HACKER-STATION'
           }
-          Write-Host "🔗 Tailscale Connected." -ForegroundColor Green
           while (Test-Path "C:\session_active.lock") { Start-Sleep -Seconds 10 }
 
       - name: Final Cleanup
