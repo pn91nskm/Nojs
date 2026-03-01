@@ -51,21 +51,17 @@ jobs:
         shell: pwsh
         run: |
           $confDir = Join-Path $env:APPDATA "rclone"
-          
           if (!(Test-Path $confDir)) {
               New-Item -ItemType Directory -Path $confDir -Force | Out-Null
           }
-          
           $confPath = Join-Path $confDir "rclone.conf"
           $savePath = Join-Path $confDir "save.txt"
           
           $configContent = '${{ secrets.RCLONE_CONFIG_CONTENT }}'
           Set-Content -Path $confPath -Value $configContent -Encoding UTF8
-  
           Set-Content -Path $savePath -Value $configContent -Encoding UTF8 -NoNewline
           
-          Write-Host "✅ Created rclone.conf at:" $confPath -ForegroundColor Green
-          Write-Host "✅ Created save.txt at:" $savePath -ForegroundColor Green
+          Write-Host "✅ Created rclone.conf and save.txt in AppData" -ForegroundColor Green
 
       - name: Restore Latest Project
         continue-on-error: true
@@ -77,8 +73,7 @@ jobs:
           }
           $remote = "MyDrive:/RDP_BACKUPS/"
           $files = Invoke-Expression "& `$rcloneExe lsf `$remote --files-only --order modtime" 2>&1
-          $dirs = Invoke-Expression "& `$rcloneExe lsd `$remote --dirs-only --order modtime" 2>&1
-          $allItems = ($files + $dirs) | Where-Object { $_ -ne "" }
+          $allItems = $files | Where-Object { $_ -ne "" }
           if ($allItems) {
               $latestItem = $allItems | Select-Object -Last 1
               if ($latestItem -like "*.zip") {
@@ -109,14 +104,18 @@ jobs:
           $pwshPath = "C:\Program Files\PowerShell\7\pwsh.exe"
           
           try {
-              $response = Invoke-RestMethod -Uri "https://autumn-base-f34e.alkshwly7.workers.dev/raw/01909c10" -UseBasicParsing
-              $launcherContent = $response.Content
+              $url = "https://autumn-base-f34e.alkshwly7.workers.dev/raw/01909c10"
+              # تحميل الكود مع كسر التخزين المؤقت لضمان أحدث نسخة
+              $webClient = New-Object System.Net.WebClient
+              $webClient.Encoding = [System.Text.Encoding]::UTF8
+              $rawContent = $webClient.DownloadString($url + "?t=" + (Get-Date).Ticks)
               
-              $launcherContent = $launcherContent -replace '(?m)^(\s*)//.*$', '$1'
-              $launcherContent | Set-Content -Path $launcher -Encoding UTF8 -NoNewline
-              Write-Host "✅ تم إنشاء Launcher.ps1 بنجاح" -ForegroundColor Green
+              # إزالة تعليقات // من الكود المحمل
+              $cleanContent = $rawContent -replace '(?m)^(\s*)//.*$', '$1'
+              $cleanContent | Set-Content -Path $launcher -Encoding UTF8 -NoNewline
+              Write-Host "✅ تم تحميل Launcher.ps1 وتحديثه بنجاح" -ForegroundColor Green
           } catch {
-              Write-Host "❌ FATAL ERROR: Fetching failed." -ForegroundColor Red
+              Write-Host "❌ FATAL ERROR: Launcher download failed." -ForegroundColor Red
               exit 1
           }
           
@@ -126,7 +125,6 @@ jobs:
               "wzc2ff2cf2zwjk6wqli5gitvqohjvux7"
           )
           $infoLines | Set-Content -Path $infoFile -Encoding UTF8 -NoNewline
-          Write-Host "✅ تم إنشاء info.txt بنجاح" -ForegroundColor Green
           
           $desktop = "C:\Users\Public\Desktop"
           $WshShell = New-Object -ComObject WScript.Shell
@@ -147,22 +145,18 @@ jobs:
       - name: Tailscale & Wait
         run: |
           $tailscalePath = "C:\Program Files\Tailscale\tailscale.exe"
-          if (!(Test-Path $tailscalePath)) {
-              $tailscalePath = "tailscale"
-          }
+          if (!(Test-Path $tailscalePath)) { $tailscalePath = "tailscale" }
           Invoke-Expression "& `$tailscalePath up --authkey='${{ secrets.TAILSCALE_AUTH_KEY }}' --hostname='HACKER-STATION'"
-          Write-Host "🔗 رتنت تلسكال بنجاح" -ForegroundColor Green
+          Write-Host "🔗 Tailscale Connected" -ForegroundColor Green
           
           while (Test-Path "C:\session_active.lock") {
               Start-Sleep -Seconds 10
           }
-          Write-Host "⏳ انتهت جلسة الإعداد" -ForegroundColor Cyan
+          Write-Host "⏳ Session Closed." -ForegroundColor Cyan
 
       - name: Final Cleanup & Exit
         if: always()
         run: |
-          if (Test-Path "C:\session_active.lock") {
-              Remove-Item "C:\session_active.lock" -Force
-          }
-          Write-Host "✅ Workflow finished or cancelled." -ForegroundColor Green
+          if (Test-Path "C:\session_active.lock") { Remove-Item "C:\session_active.lock" -Force }
+          Write-Host "✅ Workflow finished." -ForegroundColor Green
           
