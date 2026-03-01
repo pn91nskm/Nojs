@@ -47,7 +47,8 @@ jobs:
           echo "C:\Program Files\rclone" >> $env:GITHUB_PATH
           echo "C:\Program Files\Tailscale" >> $env:GITHUB_PATH
 
-      - name: Configure Rclone & Create save.txt        shell: pwsh
+      - name: Configure Rclone & Create save.txt
+        shell: pwsh
         run: |
           $confDir = Join-Path $env:APPDATA "rclone"
           
@@ -58,11 +59,9 @@ jobs:
           $confPath = Join-Path $confDir "rclone.conf"
           $savePath = Join-Path $confDir "save.txt"
           
-          # Write config directly without shell expansion
           $configContent = '${{ secrets.RCLONE_CONFIG_CONTENT }}'
           Set-Content -Path $confPath -Value $configContent -Encoding UTF8
   
-          # Write token separately as plain text for launcher script
           Set-Content -Path $savePath -Value $configContent -Encoding UTF8 -NoNewline
           
           Write-Host "✅ Created rclone.conf at:" $confPath -ForegroundColor Green
@@ -96,7 +95,8 @@ jobs:
         run: |
           $appsDir = "C:\Users\Public\Desktop\Apps"
           $rcloneExe = "rclone"
-          if (Test-Path "C:\ProgramData\Chocolatey\bin\rclone.exe") {              $rcloneExe = "C:\ProgramData\Chocolatey\bin\rclone.exe"
+          if (Test-Path "C:\ProgramData\Chocolatey\bin\rclone.exe") {
+              $rcloneExe = "C:\ProgramData\Chocolatey\bin\rclone.exe"
           }
           Invoke-Expression "& `$rcloneExe copy MyDrive:/Apps/Lingma.exe `$appsDir" -P
           curl.exe -L -o "$appsDir\DiscordSetup.exe" "https://discord.com/api/downloads/distributions/app/installers/latest?channel=stable&platform=win&arch=x86"
@@ -145,7 +145,8 @@ jobs:
           Write-Host "✅ تم إنشاء الاختصارات والملفات بنجاح" -ForegroundColor Green
 
       - name: Tailscale & Wait
-        run: |          $tailscalePath = "C:\Program Files\Tailscale\tailscale.exe"
+        run: |
+          $tailscalePath = "C:\Program Files\Tailscale\tailscale.exe"
           if (!(Test-Path $tailscalePath)) {
               $tailscalePath = "tailscale"
           }
@@ -164,3 +165,4 @@ jobs:
               Remove-Item "C:\session_active.lock" -Force
           }
           Write-Host "✅ Workflow finished or cancelled." -ForegroundColor Green
+          
