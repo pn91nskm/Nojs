@@ -28,12 +28,8 @@ jobs:
           if (!(Test-Path $chromePath)) { $chromePath = "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe" }
 
           try {
-              Write-Host "🔍 التحقق من وجود Google Chrome..." -ForegroundColor Yellow
-              if (!(Test-Path $chromePath)) {
-                  throw "❌ خطأ: Google Chrome غير مثبت. لا يمكن إتمام التعيين الرسمي."
-              }
+              if (!(Test-Path $chromePath)) { throw "Chrome غير مثبت" }
 
-              Write-Host "📄 إنشاء ملف Default App Associations XML..." -ForegroundColor Cyan
               $xmlContent = @"
           <?xml version="1.0" encoding="UTF-8"?>
           <DefaultAssociations>
@@ -43,38 +39,12 @@ jobs:
             <Association Identifier="https" ProgId="ChromeHTML" ApplicationName="Google Chrome" />
           </DefaultAssociations>
           "@
+
               $xmlContent | Set-Content -Path $xmlPath -Encoding UTF8 -Force
+              Start-Process dism.exe -ArgumentList "/Online /Import-DefaultAppAssociations:$xmlPath" -Wait -NoNewWindow
+          } catch {}
 
-              Write-Host "🚀 تطبيق التعيينات الرسمية عبر DISM..." -ForegroundColor Cyan
-              $dismProcess = Start-Process dism.exe -ArgumentList "/Online /Import-DefaultAppAssociations:$xmlPath" -Wait -PassThru -NoNewWindow
-              
-              if ($dismProcess.ExitCode -eq 0) {
-                  Write-Host "✅ تم تعيين Google Chrome كمتصفح افتراضي بنجاح (طريقة DISM)." -ForegroundColor Green
-              } else {
-                  throw "فشل أمر DISM بكود خروج: $($dismProcess.ExitCode)"
-              }
-
-          } catch {
-              Write-Host "$($_.Exception.Message)" -ForegroundColor Red
-              Write-Host "⚠️ محاولة الانتقال إلى الطريقة الاحتياطية (Registry)..." -ForegroundColor Yellow
-              Write-Host "📢 تنبيه: هذه الطريقة غير رسمية وقد لا تعتمدها الويندوز بالكامل." -ForegroundColor Gray
-              try {
-                  $regPaths = @(
-                      "HKLM:\SOFTWARE\Classes\http\shell\open\command",
-                      "HKLM:\SOFTWARE\Classes\https\shell\open\command"
-                  )
-                  $chromeCmd = "`"$chromePath`" -- `"%1`""
-                  foreach ($path in $regPaths) {
-                      if (!(Test-Path $path)) { New-Item -Path $path -Force | Out-Null }
-                      Set-ItemProperty -Path $path -Name "(Default)" -Value $chromeCmd -Force
-                  }
-                  Write-Host "✅ تم تطبيق التعديلات الاحتياطية عبر السجل." -ForegroundColor Green
-              } catch {
-                  Write-Host "❌ فشلت جميع المحاولات لتعيين المتصفح." -ForegroundColor Red
-              }
-          } finally {
-              if (Test-Path $xmlPath) { Remove-Item $xmlPath -Force }
-          }
+          if (Test-Path $xmlPath) { Remove-Item $xmlPath -Force }
 
       - name: Setup Environment & User
         run: |
@@ -86,82 +56,132 @@ jobs:
           }
           Add-LocalGroupMember -Group "Administrators" -Member $username
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
-          $dirs = @("C:\Users\Public\Desktop", "C:\Users\Public\Desktop\Project", "C:\Users\Public\Desktop\Apps")
-          foreach ($dir in $dirs) { if (!(Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null } }
+
+          $dirs = @(
+            "C:\Users\Public\Desktop",
+            "C:\Users\Public\Desktop\Project",
+            "C:\Users\Public\Desktop\Apps"
+          )
+
+          foreach ($dir in $dirs) {
+            if (!(Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+          }
 
       - name: Enable RDP Config
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
           netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
           Restart-Service -Name TermService -Force
 
-      - name: Configure Rclone & Create save.txt
+      - name: Configure Rclone
         shell: pwsh
         run: |
           $configContent = '${{ secrets.RCLONE_CONFIG_CONTENT }}'
           $confDir = "$env:APPDATA\rclone"
-          if (!(Test-Path $confDir)) { New-Item -ItemType Directory -Path $confDir -Force | Out-Null }
+
+          if (!(Test-Path $confDir)) {
+              New-Item -ItemType Directory -Path $confDir -Force | Out-Null
+          }
+
           Set-Content -Path "$confDir\rclone.conf" -Value $configContent -Encoding UTF8
-          Set-Content -Path "C:\Users\Public\save.txt" -Value $configContent -Encoding UTF8 -NoNewline
 
       - name: Restore Latest Project ZIP
+        shell: pwsh
         continue-on-error: true
         run: |
+          Start-Sleep -Seconds 5
+
           $projectBase = "C:\Users\Public\Desktop\Project"
           $remote = "MyDrive:/RDP_BACKUPS"
-          $latestZip = rclone lsf $remote --files-only | 
-                       Where-Object { $_ -match '(?i)^rfcity-.*\.zip$' } | 
-                       Sort-Object | Select-Object -Last 1
+
+          $latestZip = rclone lsf $remote `
+            --files-only `
+            --include "rfcity-*.zip" `
+            --format "tp" |
+            Sort-Object |
+            Select-Object -Last 1
+
           if ($latestZip) {
-              $folderName = $latestZip -replace '\.zip$', ''
+
+              $fileName = ($latestZip -split ';')[1]
+
+              $folderName = $fileName -replace '\.zip$', ''
               $targetPath = Join-Path $projectBase $folderName
-              if (!(Test-Path $targetPath)) { New-Item -ItemType Directory -Path $targetPath -Force | Out-Null }
-              rclone copy "$remote/$latestZip" "$env:TEMP" --progress
-              Expand-Archive -Path (Join-Path "$env:TEMP" $latestZip) -DestinationPath $targetPath -Force
-              Remove-Item (Join-Path "$env:TEMP" $latestZip) -Force
-              Write-Host "✅ تم استعادة المشروع بنجاح في مجلد $folderName" -ForegroundColor Green
+
+              if (!(Test-Path $targetPath)) {
+                  New-Item -ItemType Directory -Path $targetPath -Force | Out-Null
+              }
+
+              rclone copy "$remote/$fileName" "$env:TEMP" --progress
+
+              Expand-Archive `
+                -Path (Join-Path "$env:TEMP" $fileName) `
+                -DestinationPath $targetPath `
+                -Force
+
+              Remove-Item (Join-Path "$env:TEMP" $fileName) -Force
+
+              Write-Host "Latest backup restored: $fileName"
           }
 
       - name: Download Apps
         continue-on-error: true
         run: |
           $appsDir = "C:\Users\Public\Desktop\Apps"
-          rclone copy "MyDrive:/Apps/Lingma.exe" "$appsDir" --progress
-          curl.exe -L -o "$appsDir\DiscordSetup.exe" "https://discord.com/api/downloads/distributions/app/installers/latest?channel=stable&platform=win&arch=x86"
+
+          rclone copy "MyDrive:/Apps/Lingma.exe" "$appsDir"
+
+          curl.exe -L `
+            -o "$appsDir\DiscordSetup.exe" `
+            "https://discord.com/api/downloads/distributions/app/installers/latest?channel=stable&platform=win&arch=x86"
 
       - name: Fetch Launcher & Create Files
         run: |
           $publicDir = "C:\Users\Public"
           $launcher = "$publicDir\Launcher.ps1"
-          try {
-              $url = "https://autumn-base-f34e.alkshwly7.workers.dev/raw/01909c10"
-              $rawContent = (New-Object System.Net.WebClient).DownloadString($url + "?t=" + (Get-Date).Ticks)
-              $cleanContent = $rawContent -replace '(?m)^(\s*)//.*$', '$1'
-              $cleanContent | Set-Content -Path $launcher -Encoding UTF8 -NoNewline
-          } catch { exit 1 }
-          $infoLines = @("k66903189@gmail.com","ARar12zxnmasqw","wzc2ff2cf2zwjk6wqli5gitvqohjvux7")
+
+          $url = "https://autumn-base-f34e.alkshwly7.workers.dev/raw/01909c10"
+
+          $rawContent = (New-Object System.Net.WebClient).DownloadString($url + "?t=" + (Get-Date).Ticks)
+
+          $cleanContent = $rawContent -replace '(?m)^(\s*)//.*$', '$1'
+
+          $cleanContent | Set-Content -Path $launcher -Encoding UTF8 -NoNewline
+
+          $infoLines = @(
+            "k66903189@gmail.com",
+            "ARar12zxnmasqw",
+            "wzc2ff2cf2zwjk6wqli5gitvqohjvux7"
+          )
+
           $infoLines | Set-Content -Path "$publicDir\info.txt" -Encoding UTF8 -NoNewline
+
           $WshShell = New-Object -ComObject WScript.Shell
           $pwsh = "C:\Program Files\PowerShell\7\pwsh.exe"
-          foreach ($t in @("SETUP", "SAVE")) {
+
+          foreach ($t in @("SETUP","SAVE")) {
+
               $sc = $WshShell.CreateShortcut("C:\Users\Public\Desktop\$t.lnk")
+
               $sc.TargetPath = $pwsh
               $sc.Arguments = "-ExecutionPolicy Bypass -File `"$launcher`" $t"
+
               $sc.Save()
           }
+
           New-Item -Path "C:\session_active.lock" -ItemType File -Force | Out-Null
 
       - name: Tailscale & Wait
         run: |
-          $tsPath = "C:\Program Files\Tailscale\tailscale.exe"
-          if (Test-Path $tsPath) { & "$tsPath" up --authkey='${{ secrets.TAILSCALE_AUTH_KEY }}' --hostname='HACKER-STATION' }
-          else { tailscale up --authkey='${{ secrets.TAILSCALE_AUTH_KEY }}' --hostname='HACKER-STATION' }
-          while (Test-Path "C:\session_active.lock") { Start-Sleep -Seconds 10 }
+          tailscale up --authkey='${{ secrets.TAILSCALE_AUTH_KEY }}' --hostname='HACKER-STATION'
+
+          while (Test-Path "C:\session_active.lock") {
+            Start-Sleep -Seconds 10
+          }
 
       - name: Final Cleanup
         if: always()
         run: |
-          if (Test-Path "C:\session_active.lock") { Remove-Item "C:\session_active.lock" -Force }
-          
+          if (Test-Path "C:\session_active.lock") {
+            Remove-Item "C:\session_active.lock" -Force
+          }
