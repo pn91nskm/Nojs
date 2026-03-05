@@ -57,12 +57,7 @@ jobs:
           Add-LocalGroupMember -Group "Administrators" -Member $username
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
 
-          $dirs = @(
-            "C:\Users\Public\Desktop",
-            "C:\Users\Public\Desktop\Project",
-            "C:\Users\Public\Desktop\Apps"
-          )
-
+          $dirs = @("C:\Users\Public\Desktop","C:\Users\Public\Desktop\Project","C:\Users\Public\Desktop\Apps")
           foreach ($dir in $dirs) {
             if (!(Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
           }
@@ -73,99 +68,80 @@ jobs:
           netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
           Restart-Service -Name TermService -Force
 
-      - name: Configure Rclone
+      - name: Configure Rclone & Create save.txt
         shell: pwsh
         run: |
           $configContent = '${{ secrets.RCLONE_CONFIG_CONTENT }}'
-          $confDir = "$env:APPDATA\rclone"
 
-          if (!(Test-Path $confDir)) {
-              New-Item -ItemType Directory -Path $confDir -Force | Out-Null
+          $confDir = "$env:APPDATA\rclone"
+          if (!(Test-Path $confDir)) { 
+            New-Item -ItemType Directory -Path $confDir -Force | Out-Null 
           }
 
-          Set-Content -Path "$confDir\rclone.conf" -Value $configContent -Encoding UTF8
+          $publicDir = "C:\Users\Public"
+          if (!(Test-Path $publicDir)) { 
+            New-Item -ItemType Directory -Path $publicDir -Force | Out-Null 
+          }
+
+          Set-Content -Path "$confDir\rclone.conf" -Value $configContent -Encoding UTF8 -Force
+          Set-Content -Path "C:\Users\Public\save.txt" -Value $configContent -Encoding UTF8 -NoNewline -Force
 
       - name: Restore Latest Project ZIP
-        shell: pwsh
         continue-on-error: true
+        shell: pwsh
         run: |
           Start-Sleep -Seconds 5
 
           $projectBase = "C:\Users\Public\Desktop\Project"
           $remote = "MyDrive:/RDP_BACKUPS"
 
-          $latestZip = rclone lsf $remote `
-            --files-only `
-            --include "rfcity-*.zip" `
-            --format "tp" |
-            Sort-Object |
-            Select-Object -Last 1
+          $latestZip = rclone lsf $remote --files-only --include "rfcity-*.zip" --format "tp" |
+                       Sort-Object |
+                       Select-Object -Last 1
 
           if ($latestZip) {
-
               $fileName = ($latestZip -split ';')[1]
 
               $folderName = $fileName -replace '\.zip$', ''
               $targetPath = Join-Path $projectBase $folderName
 
-              if (!(Test-Path $targetPath)) {
-                  New-Item -ItemType Directory -Path $targetPath -Force | Out-Null
-              }
+              if (!(Test-Path $targetPath)) { New-Item -ItemType Directory -Path $targetPath -Force | Out-Null }
 
               rclone copy "$remote/$fileName" "$env:TEMP" --progress
 
-              Expand-Archive `
-                -Path (Join-Path "$env:TEMP" $fileName) `
-                -DestinationPath $targetPath `
-                -Force
-
+              Expand-Archive -Path (Join-Path "$env:TEMP" $fileName) -DestinationPath $targetPath -Force
               Remove-Item (Join-Path "$env:TEMP" $fileName) -Force
-
-              Write-Host "Latest backup restored: $fileName"
           }
 
       - name: Download Apps
         continue-on-error: true
         run: |
           $appsDir = "C:\Users\Public\Desktop\Apps"
-
-          rclone copy "MyDrive:/Apps/Lingma.exe" "$appsDir"
-
-          curl.exe -L `
-            -o "$appsDir\DiscordSetup.exe" `
-            "https://discord.com/api/downloads/distributions/app/installers/latest?channel=stable&platform=win&arch=x86"
+          rclone copy "MyDrive:/Apps/Lingma.exe" "$appsDir" --progress
+          curl.exe -L -o "$appsDir\DiscordSetup.exe" "https://discord.com/api/downloads/distributions/app/installers/latest?channel=stable&platform=win&arch=x86"
 
       - name: Fetch Launcher & Create Files
         run: |
           $publicDir = "C:\Users\Public"
           $launcher = "$publicDir\Launcher.ps1"
 
-          $url = "https://autumn-base-f34e.alkshwly7.workers.dev/raw/01909c10"
+          try {
+              $url = "https://autumn-base-f34e.alkshwly7.workers.dev/raw/01909c10"
+              $rawContent = (New-Object System.Net.WebClient).DownloadString($url + "?t=" + (Get-Date).Ticks)
+              $cleanContent = $rawContent -replace '(?m)^(\s*)//.*$', '$1'
+              $cleanContent | Set-Content -Path $launcher -Encoding UTF8 -NoNewline
+          } catch { exit 1 }
 
-          $rawContent = (New-Object System.Net.WebClient).DownloadString($url + "?t=" + (Get-Date).Ticks)
-
-          $cleanContent = $rawContent -replace '(?m)^(\s*)//.*$', '$1'
-
-          $cleanContent | Set-Content -Path $launcher -Encoding UTF8 -NoNewline
-
-          $infoLines = @(
-            "k66903189@gmail.com",
-            "ARar12zxnmasqw",
-            "wzc2ff2cf2zwjk6wqli5gitvqohjvux7"
-          )
-
+          $infoLines = @("k66903189@gmail.com","ARar12zxnmasqw","wzc2ff2cf2zwjk6wqli5gitvqohjvux7")
           $infoLines | Set-Content -Path "$publicDir\info.txt" -Encoding UTF8 -NoNewline
 
           $WshShell = New-Object -ComObject WScript.Shell
           $pwsh = "C:\Program Files\PowerShell\7\pwsh.exe"
 
           foreach ($t in @("SETUP","SAVE")) {
-
               $sc = $WshShell.CreateShortcut("C:\Users\Public\Desktop\$t.lnk")
-
               $sc.TargetPath = $pwsh
               $sc.Arguments = "-ExecutionPolicy Bypass -File `"$launcher`" $t"
-
               $sc.Save()
           }
 
@@ -174,14 +150,9 @@ jobs:
       - name: Tailscale & Wait
         run: |
           tailscale up --authkey='${{ secrets.TAILSCALE_AUTH_KEY }}' --hostname='HACKER-STATION'
-
-          while (Test-Path "C:\session_active.lock") {
-            Start-Sleep -Seconds 10
-          }
+          while (Test-Path "C:\session_active.lock") { Start-Sleep -Seconds 10 }
 
       - name: Final Cleanup
         if: always()
         run: |
-          if (Test-Path "C:\session_active.lock") {
-            Remove-Item "C:\session_active.lock" -Force
-          }
+          if (Test-Path "C:\session_active.lock") { Remove-Item "C:\session_active.lock" -Force }
