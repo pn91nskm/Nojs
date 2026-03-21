@@ -143,8 +143,8 @@ jobs:
 
       - name: Tailscale & Wait
         run: |
-          tailscale up --authkey='${{ secrets.TAILSCALE_AUTH_KEY }}' --hostname='HACKER-STATION'          while (Test-Path "C:\session_active.lock") { Start-Sleep -Seconds 10 }
-
+          tailscale up --authkey='${{ secrets.TAILSCALE_AUTH_KEY }}' --hostname='HACKER-STATION'
+          while (Test-Path "C:\session_active.lock") { Start-Sleep -Seconds 10 }
       - name: Run Save Script Forcibly
         run: |
           New-Item -ItemType Directory -Force -Path "$env:TEMP\savestep" | Out-Null
