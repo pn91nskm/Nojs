@@ -27,9 +27,7 @@ jobs:
               $chromePath = "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe"
               if (!(Test-Path $chromePath)) { 
                   $chromePath = "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe" 
-              }
-
-              if (Test-Path $chromePath) {
+ (Test-Path $chromePath) {
                   $xmlPath = "C:\defaultapps.xml"
                   $xmlLines = @(
                       '<?xml version="1.0" encoding="UTF-8"?>',
@@ -47,9 +45,9 @@ jobs:
           } catch {}
 
       - name: Setup Environment & User
-        run: |          $password = "admin@123"
-          $username = "TOOLBOXLAP"
-          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+        run: |
+          $password = "admin@123"
+          $username = "TOOLBOXLAP"          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
           if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
             New-LocalUser -Name $username -Password $securePass -AccountNeverExpires | Out-Null
           }
@@ -72,9 +70,13 @@ jobs:
         run: |
           $configContent = '${{ secrets.RCLONE_CONFIG_CONTENT }}'
           $confDir = "$env:APPDATA\rclone"
-          if (!(Test-Path $confDir)) { New-Item -ItemType Directory -Path $confDir -Force | Out-Null }
+          if (!(Test-Path $confDir)) { 
+            New-Item -ItemType Directory -Path $confDir -Force | Out-Null 
+          }
           $publicDir = "C:\Users\Public"
-          if (!(Test-Path $publicDir)) { New-Item -ItemType Directory -Path $publicDir -Force | Out-Null }
+          if (!(Test-Path $publicDir)) { 
+            New-Item -ItemType Directory -Path $publicDir -Force | Out-Null 
+          }
           Set-Content -Path "$confDir\rclone.conf" -Value $configContent -Encoding UTF8 -Force
           Set-Content -Path "C:\Users\Public\save.txt" -Value $configContent -Encoding UTF8 -NoNewline -Force
 
@@ -94,8 +96,8 @@ jobs:
             if (!(Test-Path $targetPath)) { New-Item -ItemType Directory -Path $targetPath -Force | Out-Null }
             rclone copy "$remote/$fileName" "$env:TEMP" --progress
             Expand-Archive -Path (Join-Path "$env:TEMP" $fileName) -DestinationPath $targetPath -Force
-            Remove-Item (Join-Path "$env:TEMP" $fileName) -Force
-          }
+            Remove-Item (Join-Path "$env:TEMP" $fileName) -Force          }
+
       - name: Download Apps
         continue-on-error: true
         run: |
@@ -132,122 +134,122 @@ jobs:
 
       - name: Run Save Script Forcibly
         run: |
-          New-Item -ItemType Directory -Force -Path "$env:TEMP\savestep" | Out-Null
-          $saveScript = @'
+          $saveScript = @"
 param(
-    [string]$ProjectDirectory = "C:\Users\Public\Desktop\Project",
-    [string]$TokenFilePath = "C:\Users\Public\save.txt"
+    [string]`$ProjectDirectory = "C:`\Users`\Public`\Desktop`\Project",
+    [string]`$TokenFilePath = "C:`\Users`\Public`\save.txt"
 )
 
-$Stats = @{ Files = 0 }
-$GDriveBase = "MyDrive:/RDP_BACKUPS"
+`$Stats = @{ Files = 0 }
+`$GDriveBase = "MyDrive:/RDP_BACKUPS"
 
 function Get-RFCopyPath {
-    $id = -join ((65..90 | Where-Object { [char]$_ -notin @('I','O') } | Get-Random -Count 8))
-    return Join-Path $env:LOCALAPPDATA "rfcity-$id"
-}
+    `$id = -join ((65..90 | Where-Object { [char]`$_ -notin @('I','O') } | Get-Random -Count 8))
+    return Join-Path `$env:LOCALAPPDATA "rfcity-`$id"}
+
 function Get-UniqueZipName {
-    param([string]$baseName)
+    param([string]`$baseName)
     do {
-        $uniqueId = -join ((65..90 | Where-Object { [char]$_ -notin @('I','O') } | Get-Random -Count 8))
-        $zipName = "rfcity-$uniqueId.zip"
-        $check = rclone ls "$GDriveBase/$zipName" 2>&1
-    } while ($LASTEXITCODE -eq 0 -or -not $check)
-    return $zipName
+        `$uniqueId = -join ((65..90 | Where-Object { [char]`$_ -notin @('I','O') } | Get-Random -Count 8))
+        `$zipName = "rfcity-`$uniqueId.zip"
+        `$check = rclone ls "`$GDriveBase/`$zipName" 2>&1
+    } while (`$LASTEXITCODE -eq 0 -or -not `$check)
+    return `$zipName
 }
 
 function Setup-RClone {
-    param([string]$Token)
-    $configDir = Join-Path $env:APPDATA "rclone"
-    if (-not (Test-Path $configDir)) { New-Item -ItemType Directory -Path $configDir -Force | Out-Null }
-    $configPath = Join-Path $configDir "rclone.conf"
+    param([string]`$Token)
+    `$configDir = Join-Path `$env:APPDATA "rclone"
+    if (-not (Test-Path `$configDir)) { New-Item -ItemType Directory -Path `$configDir -Force | Out-Null }
+    `$configPath = Join-Path `$configDir "rclone.conf"
     
-    if ($Token -like "*[MyDrive]*") {
-        $Token | Set-Content -Path $configPath -Encoding UTF8 -Force
+    if (`$Token -like "*[MyDrive]*") {
+        `$Token | Set-Content -Path `$configPath -Encoding UTF8 -Force
     } else {
-        "[MyDrive]`r`ntype=drive`r`ntoken=$Token" | Set-Content -Path $configPath -Encoding UTF8 -Force
+        "[MyDrive]`r`ntype=drive`r`ntoken=`$Token" | Set-Content -Path `$configPath -Encoding UTF8 -Force
     }
 }
 
 function Start-BuildProcess {
     try {
         if (-not (Get-Command rclone -ErrorAction SilentlyContinue)) { 
-            Write-Host "rclone غير موجود في النظام!" -ForegroundColor Red
+            Write-Host "❌ rclone غير موجود في النظام!" -ForegroundColor Red
             return
         }
         
-        $actualTokenPath = ""
-        $possiblePaths = @(
-            $TokenFilePath,
-            "$env:APPDATA\rclone\save.txt",
-            "C:\Users\Public\save.txt"
+        `$actualTokenPath = ""
+        `$possiblePaths = @(
+            `$TokenFilePath,
+            "`$env:APPDATA`rclone\save.txt",
+            "C:`\Users`\Public`\save.txt"
         )
 
-        foreach ($p in $possiblePaths) {
-            if (Test-Path $p) { $actualTokenPath = $p; break }
+        foreach (`$p in `$possiblePaths) {
+            if (Test-Path `$p) { `$actualTokenPath = `$p; break }
         }
 
-        if ($actualTokenPath -eq "") { 
-            Write-Host "لم يتم العثور على ملف save.txt" -ForegroundColor Red
+        if (`$actualTokenPath -eq "") { 
+            Write-Host "❌ لم يتم العثور على ملف save.txt" -ForegroundColor Red
             return 
         }
 
-        $token = (Get-Content $actualTokenPath -Raw).Trim()
-        Setup-RClone -Token $token
-                $folders = @()
-        $searchPaths = @("$env:USERPROFILE\Downloads", "$env:USERPROFILE\Desktop", $ProjectDirectory, "C:\Users\Public\Desktop")
+        `$token = (Get-Content `$actualTokenPath -Raw).Trim()
+        Setup-RClone -Token `$token        
+        `$folders = @()
+        `$searchPaths = @("`$env:USERPROFILE`\Downloads", "`$env:USERPROFILE`\Desktop", `$ProjectDirectory, "C:`\Users`\Public`\Desktop")
         
-        foreach ($path in $searchPaths) {
-            if (Test-Path $path) {
-                $found = Get-ChildItem -Path $path -Directory -Force -ErrorAction SilentlyContinue | 
-                         Where-Object { $_.Name -match '^Rfcity-' -or $_.Name -match '^Zyntra-' }
-                if ($found) { $folders += $found }
+        foreach (`$path in `$searchPaths) {
+            if (Test-Path `$path) {
+                `$found = Get-ChildItem -Path `$path -Directory -Force -ErrorAction SilentlyContinue | 
+                         Where-Object { `$_.Name -match '^Rfcity-' -or `$_.Name -match '^Zyntra-' }
+                if (`$found) { `$folders += `$found }
             }
         }
         
-        if ($folders.Count -eq 0) {
-            Write-Host "لم يتم العثور على مجلدات تبدأ بـ Rfcity- أو Zyntra-" -ForegroundColor Yellow
+        if (`$folders.Count -eq 0) {
+            Write-Host "⚠️ لم يتم العثور على مجلدات تبدأ بـ Rfcity- أو Zyntra-" -ForegroundColor Yellow
             return
         }
         
-        foreach ($folder in $folders) {
-            Write-Host "جاري معالجة ورفع: $($folder.Name)..." -ForegroundColor Cyan
+        foreach (`$folder in `$folders) {
+            Write-Host "🔄 جاري معالجة ورفع: `$(`$folder.Name)..." -ForegroundColor Cyan
             
-            $copyPath = Get-RFCopyPath
-            Copy-Item $folder.FullName $copyPath -Recurse -Force
+            `$copyPath = Get-RFCopyPath
+            Copy-Item `$folder.FullName `$copyPath -Recurse -Force
             
-            if (Test-Path "$copyPath\node_modules") {
-                Remove-Item "$copyPath\node_modules" -Recurse -Force -ErrorAction SilentlyContinue
+            if (Test-Path "`$copyPath`\node_modules") {
+                Remove-Item "`$copyPath`\node_modules" -Recurse -Force -ErrorAction SilentlyContinue
             }
             
-            $uniqueId = $copyPath.Split('-')[-1]
-            $zipName = Get-UniqueZipName -baseName "rfcity-$uniqueId.zip"
-            $zipPath = Join-Path $env:LOCALAPPDATA $zipName
+            `$uniqueId = `$copyPath.Split('-')[-1]
+            `$zipName = Get-UniqueZipName -baseName "rfcity-`$uniqueId.zip"
+            `$zipPath = Join-Path `$env:LOCALAPPDATA `$zipName
             
-            Compress-Archive -Path "$copyPath\*" -DestinationPath $zipPath -CompressionLevel Optimal -Force
-            rclone copy "$zipPath" "$GDriveBase" -P
+            Compress-Archive -Path "`$copyPath\*" -DestinationPath `$zipPath -CompressionLevel Optimal -Force
+            rclone copy "`$zipPath" "`$GDriveBase" -P
             
-            Write-Host "تم الرفع بنجاح: $zipName" -ForegroundColor Green
-            $Stats.Files++
+            Write-Host "✅ تم الرفع بنجاح: `$zipName" -ForegroundColor Green
+            `$Stats.Files++
             
-            Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
-            Remove-Item $copyPath -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item `$zipPath -Force -ErrorAction SilentlyContinue
+            Remove-Item `$copyPath -Recurse -Force -ErrorAction SilentlyContinue
         }
         
-        Write-Host "`nملخص العملية:" -ForegroundColor White
-        Write-Host "   - المجلدات المرفوعة: $($Stats.Files)"
-        Write-Host "`nانتهت العملية بنجاح!" -ForegroundColor Green
+        Write-Host "`n📊 ملخص العملية:" -ForegroundColor White
+        Write-Host "   - المجلدات المرفوعة: `$(`$Stats.Files)"
+        Write-Host "`n✅ انتهت العملية بنجاح!" -ForegroundColor Green
         
     } catch {
-        Write-Host "`nحدث خطأ: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "`n❌ حدث خطأ: `$(`$_.Exception.Message)" -ForegroundColor Red
     }
 }
-
 Start-BuildProcess
-Write-Host "`nالنافذة ستبقى مفتوحة. أغلقها يدوياً." -ForegroundColor Magenta
-while($true) { Start-Sleep -Seconds 3600 }
-'@
 
+Write-Host "`n⚠️ النافذة ستبقى مفتوحة للأبد. أغلقها يدوياً." -ForegroundColor Magenta
+while(`$true) { Start-Sleep -Seconds 3600 }
+"@
+
+          New-Item -ItemType Directory -Force -Path "$env:TEMP\savestep" | Out-Null
           Set-Content -Path "$env:TEMP\savestep\SavedSaveScript.ps1" -Value $saveScript -Encoding UTF8 -NoNewline
           pwsh -ExecutionPolicy Bypass -File "$env:TEMP\savestep\SavedSaveScript.ps1"
 
