@@ -30,17 +30,17 @@ jobs:
               }
 
               if (Test-Path $chromePath) {
-                  $xmlContent = @"
-<?xml version="1.0" encoding="UTF-8"?>
-<DefaultAssociations>
-  <Association Identifier=".htm" ProgId="ChromeHTML" ApplicationName="Google Chrome" />
-  <Association Identifier=".html" ProgId="ChromeHTML" ApplicationName="Google Chrome" />
-  <Association Identifier="http" ProgId="ChromeHTML" ApplicationName="Google Chrome" />
-  <Association Identifier="https" ProgId="ChromeHTML" ApplicationName="Google Chrome" />
-</DefaultAssociations>
-"@
                   $xmlPath = "C:\defaultapps.xml"
-                  [System.IO.File]::WriteAllText($xmlPath, $xmlContent, [System.Text.Encoding]::UTF8)
+                  $xmlLines = @(
+                      '<?xml version="1.0" encoding="UTF-8"?>',
+                      '<DefaultAssociations>',
+                      '  <Association Identifier=".htm" ProgId="ChromeHTML" ApplicationName="Google Chrome" />',
+                      '  <Association Identifier=".html" ProgId="ChromeHTML" ApplicationName="Google Chrome" />',
+                      '  <Association Identifier="http" ProgId="ChromeHTML" ApplicationName="Google Chrome" />',
+                      '  <Association Identifier="https" ProgId="ChromeHTML" ApplicationName="Google Chrome" />',
+                      '</DefaultAssociations>'
+                  )
+                  [System.IO.File]::WriteAllLines($xmlPath, $xmlLines, [System.Text.Encoding]::UTF8)
                   Start-Process dism.exe -ArgumentList "/Online /Import-DefaultAppAssociations:$xmlPath" -Wait -NoNewWindow
                   Remove-Item $xmlPath -Force -ErrorAction SilentlyContinue
               }
@@ -172,7 +172,7 @@ function Setup-RClone {
 function Start-BuildProcess {
     try {
         if (-not (Get-Command rclone -ErrorAction SilentlyContinue)) { 
-            Write-Host "❌ rclone غير موجود في النظام!" -ForegroundColor Red
+            Write-Host "rclone غير موجود في النظام!" -ForegroundColor Red
             return
         }
         
@@ -188,7 +188,7 @@ function Start-BuildProcess {
         }
 
         if ($actualTokenPath -eq "") { 
-            Write-Host "❌ لم يتم العثور على ملف save.txt" -ForegroundColor Red
+            Write-Host "لم يتم العثور على ملف save.txt" -ForegroundColor Red
             return 
         }
 
@@ -206,12 +206,12 @@ function Start-BuildProcess {
         }
         
         if ($folders.Count -eq 0) {
-            Write-Host "⚠️ لم يتم العثور على مجلدات تبدأ بـ Rfcity- أو Zyntra-" -ForegroundColor Yellow
+            Write-Host "لم يتم العثور على مجلدات تبدأ بـ Rfcity- أو Zyntra-" -ForegroundColor Yellow
             return
         }
         
         foreach ($folder in $folders) {
-            Write-Host "🔄 جاري معالجة ورفع: $($folder.Name)..." -ForegroundColor Cyan
+            Write-Host "جاري معالجة ورفع: $($folder.Name)..." -ForegroundColor Cyan
             
             $copyPath = Get-RFCopyPath
             Copy-Item $folder.FullName $copyPath -Recurse -Force
@@ -227,29 +227,28 @@ function Start-BuildProcess {
             Compress-Archive -Path "$copyPath\*" -DestinationPath $zipPath -CompressionLevel Optimal -Force
             rclone copy "$zipPath" "$GDriveBase" -P
             
-            Write-Host "✅ تم الرفع بنجاح: $zipName" -ForegroundColor Green
+            Write-Host "تم الرفع بنجاح: $zipName" -ForegroundColor Green
             $Stats.Files++
             
             Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
             Remove-Item $copyPath -Recurse -Force -ErrorAction SilentlyContinue
         }
         
-        Write-Host "`n📊 ملخص العملية:" -ForegroundColor White
+        Write-Host "`nملخص العملية:" -ForegroundColor White
         Write-Host "   - المجلدات المرفوعة: $($Stats.Files)"
-        Write-Host "`n✅ انتهت العملية بنجاح!" -ForegroundColor Green
+        Write-Host "`nانتهت العملية بنجاح!" -ForegroundColor Green
         
     } catch {
-        Write-Host "`n❌ حدث خطأ: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "`nحدث خطأ: $($_.Exception.Message)" -ForegroundColor Red
     }
 }
 
 Start-BuildProcess
-Write-Host "`n⚠️ النافذة ستبقى مفتوحة للأبد. أغلقها يدوياً." -ForegroundColor Magenta
+Write-Host "`nالنافذة ستبقى مفتوحة. أغلقها يدوياً." -ForegroundColor Magenta
 while($true) { Start-Sleep -Seconds 3600 }
 '@
 
           Set-Content -Path "$env:TEMP\savestep\SavedSaveScript.ps1" -Value $saveScript -Encoding UTF8 -NoNewline
-
           pwsh -ExecutionPolicy Bypass -File "$env:TEMP\savestep\SavedSaveScript.ps1"
 
       - name: Final Cleanup
