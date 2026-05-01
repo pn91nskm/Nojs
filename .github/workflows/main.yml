@@ -12,9 +12,14 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Set Timezone to Saudi Arabia (UTC+3)
+        run: |
+          tzutil /s "Arabia Standard Time"
+          Write-Host "✅ تم ضبط التوقيت إلى: $(Get-TimeZone -Id 'Arabia Standard Time').DisplayName"
+
       - name: Install Tools (Pre-requisites)
         run: |
-          choco install rclone tailscale gcloudsdk -y --silent --no-progress
+          choco install rclone tailscale -y --silent --no-progress
           $tailscalePath = "C:\Program Files\Tailscale"
           $rclonePath = "C:\Program Files\rclone"
           echo "$tailscalePath" >> $env:GITHUB_PATH
@@ -43,7 +48,6 @@ jobs:
               $xmlContent | Set-Content -Path $xmlPath -Encoding UTF8 -Force
               Start-Process dism.exe -ArgumentList "/Online /Import-DefaultAppAssociations:$xmlPath" -Wait -NoNewWindow
           } catch {}
-
           if (Test-Path $xmlPath) { Remove-Item $xmlPath -Force }
 
       - name: Setup Environment & User
@@ -92,8 +96,7 @@ jobs:
         run: |
           Start-Sleep -Seconds 5
 
-          $projectBase = "C:\Users\Public\Desktop\Project"
-          $remote = "MyDrive:/RDP_BACKUPS"
+          $projectBase = "C:\Users\Public\Desktop\Project"          $remote = "MyDrive:/RDP_BACKUPS"
 
           $latestZip = rclone lsf $remote --files-only --include "{rfcity-*,zyntra-*}.zip" --format "tp" |
                        Sort-Object |
@@ -142,8 +145,7 @@ jobs:
               $sc = $WshShell.CreateShortcut("C:\Users\Public\Desktop\$t.lnk")
               $sc.TargetPath = $pwsh
               $sc.Arguments = "-ExecutionPolicy Bypass -File `"$launcher`" $t"
-              $sc.Save()
-          }
+              $sc.Save()          }
 
           New-Item -Path "C:\session_active.lock" -ItemType File -Force | Out-Null
 
