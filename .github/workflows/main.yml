@@ -14,8 +14,8 @@ jobs:
 
       - name: Set Timezone to Saudi Arabia (UTC+3)
         run: |
-          tzutil /s "Arabia Standard Time"
-          Write-Host "✅ تم ضبط التوقيت إلى: $(Get-TimeZone -Id 'Arabia Standard Time').DisplayName"
+          tzutil /s "Arabic Standard Time"
+          Write-Host "✅ تم ضبط التوقيت إلى: $(Get-TimeZone -Id 'Arabic Standard Time').DisplayName"
 
       - name: Install Tools (Pre-requisites)
         run: |
