@@ -50,6 +50,17 @@ jobs:
           } catch {}
           if (Test-Path $xmlPath) { Remove-Item $xmlPath -Force }
 
+      - name: Set Google as Default Search Engine for Chrome
+        shell: pwsh
+        run: |
+          $registryPath = "HKLM:\Software\Policies\Google\Chrome"
+          if (!(Test-Path $registryPath)) {
+              New-Item -Path $registryPath -Force | Out-Null
+          }
+          Set-ItemProperty -Path $registryPath -Name "DefaultSearchProviderEnabled" -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path $registryPath -Name "DefaultSearchProviderName" -Value "Google" -Type String -Force
+          Set-ItemProperty -Path $registryPath -Name "DefaultSearchProviderSearchURL" -Value "https://www.google.com/search?q={searchTerms}" -Type String -Force
+
       - name: Setup Environment & User
         run: |
           $password = "admin@123"
