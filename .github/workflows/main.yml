@@ -60,6 +60,8 @@ jobs:
           Set-ItemProperty -Path $registryPath -Name "DefaultSearchProviderEnabled" -Value 1 -Type DWord -Force
           Set-ItemProperty -Path $registryPath -Name "DefaultSearchProviderName" -Value "Google" -Type String -Force
           Set-ItemProperty -Path $registryPath -Name "DefaultSearchProviderSearchURL" -Value "https://www.google.com/search?q={searchTerms}" -Type String -Force
+          Set-ItemProperty -Path $registryPath -Name "DefaultSearchProviderNewTabURL" -Value "https://www.google.com/`#nginx/newtab" -Type String -Force
+          Set-ItemProperty -Path $registryPath -Name "DefaultSearchProviderKeyword" -Value "google.com" -Type String -Force
 
       - name: Setup Environment & User
         run: |
