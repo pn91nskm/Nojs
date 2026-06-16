@@ -1,4 +1,4 @@
-name: RDP_ULTRA_STATION_FINAL_V25
+ame: RDP_ULTRA_STATION_FINAL_V25
 
 on:
   workflow_dispatch:
@@ -78,6 +78,22 @@ jobs:
           foreach ($dir in $dirs) {
             if (!(Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
           }
+
+      - name: Setup SSH Key from GitHub Secrets
+        shell: pwsh
+        run: |
+          $sshDir = Join-Path $env:USERPROFILE ".ssh"
+          if (!(Test-Path $sshDir)) { New-Item -ItemType Directory -Path $sshDir -Force | Out-Null }
+          
+          # استرجاع المفتاح الخاص من GitHub Secrets ووضعه في الملف الصحيح
+          $privateKey = '${{ secrets.SSH_PRIVATE_KEY }}'
+          Set-Content -Path "$sshDir\id_ed25519" -Value $privateKey -NoNewline
+          
+          # ضبط صلاحيات الملف لضمان قبول SSH له
+          icacls "$sshDir\id_ed25519" /inheritance:r /grant "${env:USERNAME}:R" | Out-Null
+          
+          # إضافة GitHub إلى قائمة المضيفين المعروفين لتجنب سؤال التأكيد
+          ssh-keyscan github.com >> "$sshDir\known_hosts"
 
       - name: Enable RDP Config
         run: |
