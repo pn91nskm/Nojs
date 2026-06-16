@@ -1,4 +1,4 @@
-ame: RDP_ULTRA_STATION_FINAL_V25
+name: RDP_ULTRA_STATION_FINAL_V25
 
 on:
   workflow_dispatch:
