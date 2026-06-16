@@ -90,7 +90,12 @@ jobs:
           
           icacls "$sshDir\id_ed25519" /inheritance:r /grant "${env:USERNAME}:R" | Out-Null
           
-          ssh-keyscan -t rsa,ed25519 github.com >> "$sshDir\known_hosts"
+          $githubKeys = @"
+          github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm7g6W66XGsCW75OU69nM5w/vC2gclRcxhT
+          github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5Y4JL8PCWI/a61GZ3LYgtJTTVEGO2+FiM21iLuGOWc84GcZXMz85Ju1I=
+          github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLCS1YAxC7Y6yBYQA48FAdK9MMg56Uh9oQbrZilCNdX7mC9U8FoE+S7DQMmd9Ewvf1CoK9p4fLaxOpYycf8s6asFqSAsg8H6r39w1X7yTo256dyuu9S84DGlWbTwnn3xL22A9n93BTI1fO45A6n/6C7Xj83+P+n9e1G1`#Z8w==
+          "@
+          Set-Content -Path "$sshDir\known_hosts" -Value $githubKeys -Encoding UTF8 -Force
 
       - name: Enable RDP Config
         run: |
