@@ -177,13 +177,38 @@ jobs:
               $sc = $WshShell.CreateShortcut("C:\Users\Public\Desktop\$t.lnk")
               $sc.TargetPath = $pwsh
               $sc.Arguments = "-ExecutionPolicy Bypass -File `"$launcher`" $t"
-              $sc.Save()          }
+              $sc.Save()
+          }
 
           New-Item -Path "C:\session_active.lock" -ItemType File -Force | Out-Null
 
-      - name: Tailscale & Wait
+      - name: Tailscale Connect
         run: |
           tailscale up --authkey='${{ secrets.TAILSCALE_AUTH_KEY }}' --hostname='HACKER-STATION'
-          while (Test-Path "C:\session_active.lock") { Start-Sleep -Seconds 10 }
 
-          if (Test-Path "C:\session_active.lock") { Remove-Item "C:\session_active.lock" -Force }
+      - name: Display Tailscale Connection Info
+        run: |
+          Start-Sleep -Seconds 2
+          try {
+              $status = tailscale status --json | ConvertFrom-Json
+              Write-Host "=========================================="
+              Write-Host " Tailscale Connection Info"
+              Write-Host "=========================================="
+              Write-Host " IP       : $($status.Self.TailscaleIPs -join ', ')"
+              Write-Host " Hostname : $($status.Self.HostName)"
+              Write-Host " DNS      : $($status.Self.DNSName)"
+              Write-Host " State    : $($status.BackendState)"
+              Write-Host "=========================================="
+          } catch {
+              Write-Host "⚠️ تعذر قراءة حالة Tailscale بتنسيق JSON. الحالة النصية:"
+              tailscale status
+          }
+
+      - name: Wait for Session End
+        run: |
+          while (Test-Path "C:\session_active.lock") { 
+              Start-Sleep -Seconds 10 
+          }
+          if (Test-Path "C:\session_active.lock") { 
+              Remove-Item "C:\session_active.lock" -Force 
+          }
