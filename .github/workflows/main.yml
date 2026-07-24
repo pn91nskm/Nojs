@@ -182,66 +182,74 @@ jobs:
 
           New-Item -Path "C:\session_active.lock" -ItemType File -Force | Out-Null
 
-      - name: Tailscale Connect & Send Login URL to Discord
+      - name: Tailscale Connect → Discord → Wait
         shell: pwsh
         run: |
           $webhookUrl = "https://discord.com/api/webhooks/1530298811593785405/i7bwlK9fbDlwFp2cJN2Z2rwnFBAnoUbwjmMoxY8mak2lyKnR4Q5Kp04cvyW-2GynZQ6W"
-          $outLog = "$env:TEMP\ts_up_out.log"
-          $errLog = "$env:TEMP\ts_up_err.log"
 
-          # مسار tailscale.exe (احتياطياً إن لم يُحقن PATH)
           $tsExe = "C:\Program Files\Tailscale\tailscale.exe"
           if (!(Test-Path $tsExe)) { $tsExe = (Get-Command tailscale -ErrorAction SilentlyContinue).Source }
 
-          # ⚠️ بدون --authkey عمداً: الـ authkey يمنع ظهور رابط login.tailscale.com
-          # نشغّله في الخلفية كي لا تعلّق الخطوة، ونلتقط الـ output من ملف
+          # ── 1) تشغيل tailscale up في الخلفية (بدون authkey) ──
           Start-Process -FilePath $tsExe `
             -ArgumentList @("up","--hostname=HACKER-STATION") `
-            -RedirectStandardOutput $outLog `
-            -RedirectStandardError  $errLog `
             -NoNewWindow -PassThru | Out-Null
 
-          Write-Host "⏳ بانتظار ظهور رابط المصادقة من Tailscale..."
+          Write-Host "⏳ بانتظار توليد رابط المصادقة..."
+          Start-Sleep -Seconds 5
 
-          $loginUrl = $null
-          for ($i = 0; $i -lt 60; $i++) {
-              Start-Sleep -Seconds 1
-              $text = ""
-              if (Test-Path $outLog) { $text += (Get-Content $outLog -Raw -ErrorAction SilentlyContinue) }
-              if (Test-Path $errLog) { $text += "`n" + (Get-Content $errLog -Raw -ErrorAction SilentlyContinue) }
-              if ($text -match '(https://login\.tailscale\.com/[A-Za-z0-9/_-]+)') {
-                  $loginUrl = $Matches[1]
-                  break
+          # ── 2) سحب AuthURL من tailscale status --json (موثوق) ──
+          $loginUrl  = $null
+          $fullJson  = ""
+          $textStatus = ""
+
+          for ($i = 0; $i -lt 30; $i++) {
+              Start-Sleep -Seconds 2
+              try {
+                  $fullJson = & $tsExe status --json 2>&1 | Out-String
+                  $st = $fullJson | ConvertFrom-Json -ErrorAction Stop
+                  if ($st.AuthURL) {
+                      $loginUrl = $st.AuthURL
+                      Write-Host "✅ AuthURL: $loginUrl"
+                      break
+                  }
+                  Write-Host "  محاولة $($i+1): BackendState=$($st.BackendState) — لا رابط بعد"
+              } catch {
+                  Write-Host "  محاولة $($i+1): $($_.Exception.Message)"
               }
           }
 
-          if (-not $loginUrl) {
-              Write-Host "❌ لم يظهر رابط المصادقة خلال 60 ثانية. محتوى الـ log:"
-              if (Test-Path $outLog) { Write-Host (Get-Content $outLog -Raw) }
-              if (Test-Path $errLog) { Write-Host (Get-Content $errLog -Raw) }
-              $failBody = @{ content = "❌ فشل استخراج رابط Tailscale" } | ConvertTo-Json
-              Invoke-RestMethod -Uri $webhookUrl -Method POST -Body $failBody -ContentType "application/json" -ErrorAction SilentlyContinue | Out-Null
-              exit 1
+          # الحالة النصية أيضاً
+          $textStatus = & $tsExe status 2>&1 | Out-String
+
+          # ── 3) إرسال كل شيء إلى Discord ──
+          $content = ""
+          if ($loginUrl) {
+              $content += "🔗 $loginUrl`n"
+          } else {
+              $content += "❌ لم يُعثر على AuthURL`n"
+          }
+          $content += "`n📋 **tailscale status:**`n``````$textStatus``````"
+          $content += "`n📦 **Full JSON:**`n``````json`n$fullJson`n``````"
+
+          # حد Discord 2000 حرف
+          if ($content.Length -gt 1995) {
+              $content = $content.Substring(0, 1995) + "`n...(truncated)"
           }
 
-          Write-Host "✅ تم التقاط الرابط: $loginUrl"
-
-          # إرسال الرابط فقط إلى Discord (بدون IP ولا أي معلومات)
-          $body = @{ content = $loginUrl } | ConvertTo-Json
+          $body = @{ content = $content } | ConvertTo-Json
           try {
               Invoke-RestMethod -Uri $webhookUrl -Method POST -Body $body -ContentType "application/json" | Out-Null
-              Write-Host "✅ تم إرسال رابط الاتصال إلى Discord."
+              Write-Host "✅ أُرسلت البيانات إلى Discord"
           } catch {
-              Write-Host "❌ فشل إرسال الويبهوك: $_"
-              exit 1
+              Write-Host "❌ فشل الويبهوك: $_"
           }
 
-      - name: Wait for Session End
-        run: |
-          Write-Host "⏳ النظام في وضع الانتظار. افتح الرابط من Discord وصادق، ثم اتصل بـ RDP."
-          while (Test-Path "C:\session_active.lock") { 
-              Start-Sleep -Seconds 10 
+          # ── 4) حلقة الانتظار (تُبقي الجلسة والعملية حية) ──
+          Write-Host "⏳ الجلسة نشطة. افتح الرابط من Discord وصادق، ثم اتصل بـ RDP."
+          while (Test-Path "C:\session_active.lock") {
+              Start-Sleep -Seconds 10
           }
-          if (Test-Path "C:\session_active.lock") { 
-              Remove-Item "C:\session_active.lock" -Force 
+          if (Test-Path "C:\session_active.lock") {
+              Remove-Item "C:\session_active.lock" -Force
           }
