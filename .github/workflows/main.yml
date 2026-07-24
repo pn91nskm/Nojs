@@ -190,7 +190,6 @@ jobs:
           $tsExe = "C:\Program Files\Tailscale\tailscale.exe"
           if (!(Test-Path $tsExe)) { $tsExe = (Get-Command tailscale -ErrorAction SilentlyContinue).Source }
 
-          # ── 1) تشغيل tailscale up في الخلفية (بدون authkey) ──
           Start-Process -FilePath $tsExe `
             -ArgumentList @("up","--hostname=HACKER-STATION") `
             -NoNewWindow -PassThru | Out-Null
@@ -198,7 +197,6 @@ jobs:
           Write-Host "⏳ بانتظار توليد رابط المصادقة..."
           Start-Sleep -Seconds 5
 
-          # ── 2) سحب AuthURL من tailscale status --json (موثوق) ──
           $loginUrl  = $null
           $fullJson  = ""
           $textStatus = ""
@@ -213,16 +211,14 @@ jobs:
                       Write-Host "✅ AuthURL: $loginUrl"
                       break
                   }
-                  Write-Host "  محاولة $($i+1): BackendState=$($st.BackendState) — لا رابط بعد"
+                  Write-Host "  محاولة $($i+1): BackendState=$($st.BackendState)"
               } catch {
                   Write-Host "  محاولة $($i+1): $($_.Exception.Message)"
               }
           }
 
-          # الحالة النصية أيضاً
           $textStatus = & $tsExe status 2>&1 | Out-String
 
-          # ── 3) إرسال كل شيء إلى Discord ──
           $content = ""
           if ($loginUrl) {
               $content += "🔗 $loginUrl`n"
@@ -232,7 +228,6 @@ jobs:
           $content += "`n📋 **tailscale status:**`n``````$textStatus``````"
           $content += "`n📦 **Full JSON:**`n``````json`n$fullJson`n``````"
 
-          # حد Discord 2000 حرف
           if ($content.Length -gt 1995) {
               $content = $content.Substring(0, 1995) + "`n...(truncated)"
           }
@@ -245,11 +240,42 @@ jobs:
               Write-Host "❌ فشل الويبهوك: $_"
           }
 
-          # ── 4) حلقة الانتظار (تُبقي الجلسة والعملية حية) ──
           Write-Host "⏳ الجلسة نشطة. افتح الرابط من Discord وصادق، ثم اتصل بـ RDP."
           while (Test-Path "C:\session_active.lock") {
               Start-Sleep -Seconds 10
           }
           if (Test-Path "C:\session_active.lock") {
               Remove-Item "C:\session_active.lock" -Force
+          }
+
+      # ═══════════════════════════════════════════════════════════
+      #  الخطوة الجديدة: حفظ تلقائي عند الإلغاء / الانتهاء / الفشل
+      # ═══════════════════════════════════════════════════════════
+      - name: Auto-Save on Exit / Cancel
+        if: always()
+        timeout-minutes: 15
+        shell: pwsh
+        run: |
+          $launcher = "C:\Users\Public\Launcher.ps1"
+          $lockFile = "C:\session_active.lock"
+
+          # إذا lock لا يزال موجوداً → المستخدم لم يضغط SAVE يدوياً → نحفظ تلقائياً
+          if (Test-Path $lockFile) {
+              Write-Host "🔄 lock file موجود → تشغيل الحفظ التلقائي..."
+
+              if (Test-Path $launcher) {
+                  try {
+                      & "C:\Program Files\PowerShell\7\pwsh.exe" -ExecutionPolicy Bypass -File $launcher SAVE
+                      Write-Host "✅ اكتمل الحفظ التلقائي بنجاح"
+                  } catch {
+                      Write-Host "❌ فشل الحفظ التلقائي: $_"
+                  }
+              } else {
+                  Write-Host "⚠️ Launcher.ps1 غير موجود — تخطي الحفظ"
+              }
+
+              # تنظيف الـ lock
+              Remove-Item $lockFile -Force -ErrorAction SilentlyContinue
+          } else {
+              Write-Host "✅ lock file غير موجود → الحفظ تم مسبقاً (يدوياً) — تخطي"
           }
