@@ -50,18 +50,51 @@ jobs:
           } catch {}
           if (Test-Path $xmlPath) { Remove-Item $xmlPath -Force }
 
-      - name: Set Google as Default Search Engine for Chrome
+      # ═══════════════════════════════════════════════════════════
+      #  تعديل 1: إجبار Google + حذف Yahoo نهائياً
+      # ═══════════════════════════════════════════════════════════
+      - name: Force Google Search & Kill Yahoo
         shell: pwsh
         run: |
-          $registryPath = "HKLM:\Software\Policies\Google\Chrome"
-          if (!(Test-Path $registryPath)) {
-              New-Item -Path $registryPath -Force | Out-Null
+          # ── 1) سياسات Chrome الكاملة: Google فقط (managed = لا يمكن تغييره) ──
+          $polPath = "HKLM:\Software\Policies\Google\Chrome"
+          if (!(Test-Path $polPath)) { New-Item -Path $polPath -Force | Out-Null }
+
+          Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderEnabled"       -Value 1       -Type DWord  -Force
+          Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderName"          -Value "Google" -Type String -Force
+          Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderKeyword"       -Value "google.com" -Type String -Force
+          Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderSearchURL"     -Value "https://www.google.com/search?q={searchTerms}" -Type String -Force
+          Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderSuggestURL"    -Value "https://www.google.com/complete/search?client=chrome&q={searchTerms}" -Type String -Force
+          Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderIconURL"       -Value "https://www.google.com/favicon.ico" -Type String -Force
+          Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderNewTabURL"     -Value "https://www.google.com" -Type String -Force
+          Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderEncodings"     -Value "UTF-8" -Type String -Force
+
+          # ── 2) حظر إضافات Yahoo عبر السياسة (تمنع التثبيت والتشغيل) ──
+          $blockPath = "$polPath\ExtensionInstallBlocklist"
+          if (!(Test-Path $blockPath)) { New-Item -Path $blockPath -Force | Out-Null }
+          Set-ItemProperty -Path $blockPath -Name "1" -Value "cnmdgidklhhnmpphlfmmopmghfjhgkdi" -Type String -Force
+          Set-ItemProperty -Path $blockPath -Name "2" -Value "nljkibfhlpcnanjgbnlnbjecgicbjkge" -Type String -Force
+          Set-ItemProperty -Path $blockPath -Name "3" -Value "fpmeembnagmagppkgghhfjfdfajdfcah" -Type String -Force
+
+          # ── 3) حذف ملفات إضافات Yahoo من القرص مباشرة ──
+          $extDir = "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Extensions"
+          if (Test-Path $extDir) {
+              $yahooIds = @("cnmdgidklhhnmpphlfmmopmghfjhgkdi","nljkibfhlpcnanjgbnlnbjecgicbjkge","fpmeembnagmagppkgghhfjfdfajdfcah")
+              foreach ($id in $yahooIds) {
+                  $p = Join-Path $extDir $id
+                  if (Test-Path $p) {
+                      Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue
+                      Write-Host "🗑️ حُذف Yahoo extension: $id"
+                  }
+              }
           }
-          Set-ItemProperty -Path $registryPath -Name "DefaultSearchProviderEnabled" -Value 1 -Type DWord -Force
-          Set-ItemProperty -Path $registryPath -Name "DefaultSearchProviderName" -Value "Google" -Type String -Force
-          Set-ItemProperty -Path $registryPath -Name "DefaultSearchProviderSearchURL" -Value "https://www.google.com/search?q={searchTerms}" -Type String -Force
-          Set-ItemProperty -Path $registryPath -Name "DefaultSearchProviderNewTabURL" -Value "https://www.google.com/`#nginx/newtab" -Type String -Force
-          Set-ItemProperty -Path $registryPath -Name "DefaultSearchProviderKeyword" -Value "google.com" -Type String -Force
+
+          # ── 4) تخطي شاشة Chrome الترحيبية (تمنع اقتراح Yahoo) ──
+          $userData = "$env:LOCALAPPDATA\Google\Chrome\User Data"
+          if (!(Test-Path $userData)) { New-Item -Path $userData -ItemType Directory -Force | Out-Null }
+          "" | Set-Content "$userData\First Run" -Force
+
+          Write-Host "✅ تم إجبار Google كمحرك بحث وحيد + حذف Yahoo"
 
       - name: Setup Environment & User
         run: |
@@ -249,33 +282,49 @@ jobs:
           }
 
       # ═══════════════════════════════════════════════════════════
-      #  الخطوة الجديدة: حفظ تلقائي عند الإلغاء / الانتهاء / الفشل
+      #  تعديل 2: حفظ قسري — يعمل دائماً ولا يعلّق أبداً
       # ═══════════════════════════════════════════════════════════
-      - name: Auto-Save on Exit / Cancel
+      - name: Auto-Save (Forced — Never Hangs)
         if: always()
+        continue-on-error: true
         timeout-minutes: 15
         shell: pwsh
         run: |
-          $launcher = "C:\Users\Public\Launcher.ps1"
-          $lockFile = "C:\session_active.lock"
+          $launcher   = "C:\Users\Public\Launcher.ps1"
+          $lockFile   = "C:\session_active.lock"
+          $pwsh       = "C:\Program Files\PowerShell\7\pwsh.exe"
+          $maxWaitSec = 600   # 10 دقائق كحد أقصى — بعدها قتل إجباري
 
-          # إذا lock لا يزال موجوداً → المستخدم لم يضغط SAVE يدوياً → نحفظ تلقائياً
           if (Test-Path $lockFile) {
-              Write-Host "🔄 lock file موجود → تشغيل الحفظ التلقائي..."
+              Write-Host "🔄 lock موجود → حفظ تلقائي إجباري..."
 
               if (Test-Path $launcher) {
                   try {
-                      & "C:\Program Files\PowerShell\7\pwsh.exe" -ExecutionPolicy Bypass -File $launcher SAVE
-                      Write-Host "✅ اكتمل الحفظ التلقائي بنجاح"
+                      $proc = Start-Process -FilePath $pwsh `
+                          -ArgumentList "-ExecutionPolicy Bypass -File `"$launcher`" SAVE" `
+                          -NoNewWindow -PassThru
+
+                      # انتظار مع مهلة — لا تعلّق للأبد
+                      $exited = $proc.WaitForExit($maxWaitSec * 1000)
+
+                      if (!$exited) {
+                          Write-Host "⚠️ انتهت المهلة ($maxWaitSec ث) → قتل إجباري"
+                          $proc.Kill()
+                          Start-Sleep -Seconds 2
+                          Write-Host "⛔ قُتلت عملية الحفظ"
+                      } else {
+                          Write-Host "✅ الحفظ اكتمل (Exit Code: $($proc.ExitCode))"
+                      }
                   } catch {
-                      Write-Host "❌ فشل الحفظ التلقائي: $_"
+                      Write-Host "❌ خطأ في الحفظ: $_"
                   }
               } else {
-                  Write-Host "⚠️ Launcher.ps1 غير موجود — تخطي الحفظ"
+                  Write-Host "⚠️ Launcher.ps1 غير موجود — تخطي"
               }
 
-              # تنظيف الـ lock
               Remove-Item $lockFile -Force -ErrorAction SilentlyContinue
           } else {
-              Write-Host "✅ lock file غير موجود → الحفظ تم مسبقاً (يدوياً) — تخطي"
+              Write-Host "✅ lock غير موجود → الحفظ تم يدوياً مسبقاً — تخطي"
           }
+
+          Write-Host "🏁 انتهت الخطوة — الـ workflow يُغلق الآن"
