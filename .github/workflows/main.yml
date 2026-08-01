@@ -51,50 +51,189 @@ jobs:
           if (Test-Path $xmlPath) { Remove-Item $xmlPath -Force }
 
       # ═══════════════════════════════════════════════════════════
-      #  تعديل 1: إجبار Google + حذف Yahoo نهائياً
+      #  دفاع متعدد الطبقات: إجبار Google + تدمير Yahoo
       # ═══════════════════════════════════════════════════════════
-      - name: Force Google Search & Kill Yahoo
+      - name: Force Google & Destroy Yahoo (All Layers)
         shell: pwsh
         run: |
-          # ── 1) سياسات Chrome الكاملة: Google فقط (managed = لا يمكن تغييره) ──
-          $polPath = "HKLM:\Software\Policies\Google\Chrome"
-          if (!(Test-Path $polPath)) { New-Item -Path $polPath -Force | Out-Null }
+          # ── 0) أوقف Chrome إن كان يعمل ──
+          Get-Process chrome -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
 
-          Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderEnabled"       -Value 1       -Type DWord  -Force
-          Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderName"          -Value "Google" -Type String -Force
-          Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderKeyword"       -Value "google.com" -Type String -Force
-          Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderSearchURL"     -Value "https://www.google.com/search?q={searchTerms}" -Type String -Force
-          Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderSuggestURL"    -Value "https://www.google.com/complete/search?client=chrome&q={searchTerms}" -Type String -Force
-          Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderIconURL"       -Value "https://www.google.com/favicon.ico" -Type String -Force
-          Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderNewTabURL"     -Value "https://www.google.com" -Type String -Force
-          Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderEncodings"     -Value "UTF-8" -Type String -Force
+          # ══════════════════════════════════════════
+          #  الطبقة 1: سياسات Chrome الكاملة (managed)
+          # ══════════════════════════════════════════
+          $pol = "HKLM:\Software\Policies\Google\Chrome"
+          if (!(Test-Path $pol)) { New-Item -Path $pol -Force | Out-Null }
 
-          # ── 2) حظر إضافات Yahoo عبر السياسة (تمنع التثبيت والتشغيل) ──
-          $blockPath = "$polPath\ExtensionInstallBlocklist"
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEnabled"    -Value 1        -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderName"       -Value "Google" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderKeyword"    -Value "google.com" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL"  -Value "https://www.google.com/search?q={searchTerms}" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSuggestURL" -Value "https://www.google.com/complete/search?client=chrome&q={searchTerms}" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderIconURL"    -Value "https://www.google.com/favicon.ico" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderNewTabURL"  -Value "https://www.google.com" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEncodings"  -Value "UTF-8"  -Type String -Force
+
+          # منع المزامنة (قد تجلب إعدادات Yahoo من جهاز آخر)
+          Set-ItemProperty -Path $pol -Name "SyncDisabled" -Value 1 -Type DWord -Force
+          # منع أدوات المطور (تمنع التعديل اليدوي عبر Console)
+          Set-ItemProperty -Path $pol -Name "DeveloperToolsAvailability" -Value 1 -Type DWord -Force
+          # منع التبويبات الترويجية
+          Set-ItemProperty -Path $pol -Name "PromotionalTabsEnabled" -Value 0 -Type DWord -Force
+          # منع صفحة الترحيب عند التحديث
+          Set-ItemProperty -Path $pol -Name "WelcomePageOnOSUpgradeEnabled" -Value 0 -Type DWord -Force
+          # منع العمل في الخلفية
+          Set-ItemProperty -Path $pol -Name "BackgroundModeEnabled" -Value 0 -Type DWord -Force
+          # منع التشغيل عند بدء النظام
+          Set-ItemProperty -Path $pol -Name "StartupBoostEnabled" -Value 0 -Type DWord -Force
+
+          Write-Host "✅ الطبقة 1: سياسات Chrome الكاملة"
+
+          # ══════════════════════════════════════════
+          #  الطبقة 2: حظر جميع الإضافات
+          # ══════════════════════════════════════════
+          $blockPath = "$pol\ExtensionInstallBlocklist"
           if (!(Test-Path $blockPath)) { New-Item -Path $blockPath -Force | Out-Null }
-          Set-ItemProperty -Path $blockPath -Name "1" -Value "cnmdgidklhhnmpphlfmmopmghfjhgkdi" -Type String -Force
-          Set-ItemProperty -Path $blockPath -Name "2" -Value "nljkibfhlpcnanjgbnlnbjecgicbjkge" -Type String -Force
-          Set-ItemProperty -Path $blockPath -Name "3" -Value "fpmeembnagmagppkgghhfjfdfajdfcah" -Type String -Force
+          # * = حظر جميع الإضافات (أقوى خيار)
+          Set-ItemProperty -Path $blockPath -Name "1" -Value "*" -Type String -Force
 
-          # ── 3) حذف ملفات إضافات Yahoo من القرص مباشرة ──
-          $extDir = "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Extensions"
-          if (Test-Path $extDir) {
-              $yahooIds = @("cnmdgidklhhnmpphlfmmopmghfjhgkdi","nljkibfhlpcnanjgbnlnbjecgicbjkge","fpmeembnagmagppkgghhfjfdfajdfcah")
-              foreach ($id in $yahooIds) {
-                  $p = Join-Path $extDir $id
-                  if (Test-Path $p) {
-                      Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue
-                      Write-Host "🗑️ حُذف Yahoo extension: $id"
+          # حظر التثبيت من مصادر خارجية
+          $typeBlock = "$pol\ExtensionInstallTypeBlocklist"
+          if (!(Test-Path $typeBlock)) { New-Item -Path $typeBlock -Force | Out-Null }
+          Set-ItemProperty -Path $typeBlock -Name "1" -Value "development" -Type String -Force
+          Set-ItemProperty -Path $typeBlock -Name "2" -Value "sideload"    -Type String -Force
+
+          Write-Host "✅ الطبقة 2: حظر جميع الإضافات + التثبيت الخارجي"
+
+          # ══════════════════════════════════════════
+          #  الطبقة 3: حذف Yahoo من كل مكان
+          # ══════════════════════════════════════════
+          $yahooIds = @("cnmdgidklhhnmpphlfmmopmghfjhgkdi","nljkibfhlpcnanjgbnlnbjecgicbjkge","fpmeembnagmagppkgghhfjfdfajdfcah")
+
+          # حذف Yahoo extensions من جميع ملفات المستخدمين
+          Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+              $extDir = Join-Path $_.FullName "AppData\Local\Google\Chrome\User Data\Default\Extensions"
+              if (Test-Path $extDir) {
+                  foreach ($yid in $yahooIds) {
+                      $p = Join-Path $extDir $yid
+                      if (Test-Path $p) {
+                          Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue
+                          Write-Host "  🗑️ حُذف extension $yid من $($_.Name)"
+                      }
                   }
               }
           }
 
-          # ── 4) تخطي شاشة Chrome الترحيبية (تمنع اقتراح Yahoo) ──
-          $userData = "$env:LOCALAPPDATA\Google\Chrome\User Data"
-          if (!(Test-Path $userData)) { New-Item -Path $userData -ItemType Directory -Force | Out-Null }
-          "" | Set-Content "$userData\First Run" -Force
+          # حذف Yahoo من البرامج المثبتة
+          $uninstallKeys = @(
+              "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+              "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+          )
+          foreach ($key in $uninstallKeys) {
+              Get-ItemProperty $key -ErrorAction SilentlyContinue |
+                  Where-Object { $_.DisplayName -like "*Yahoo*" } |
+                  ForEach-Object {
+                      if ($_.UninstallString) {
+                          Write-Host "  🗑️ إلغاء تثبيت: $($_.DisplayName)"
+                          $cmd = $_.UninstallString -replace '/I','/X'
+                          Start-Process cmd -ArgumentList "/c `"$cmd`" /S /quiet /norestart" -Wait -NoNewWindow -ErrorAction SilentlyContinue
+                      }
+                  }
+          }
 
-          Write-Host "✅ تم إجبار Google كمحرك بحث وحيد + حذف Yahoo"
+          # حذف Yahoo من Registry
+          @("HKLM:\SOFTWARE\Yahoo","HKCU:\SOFTWARE\Yahoo","HKLM:\SOFTWARE\WOW6432Node\Yahoo") | ForEach-Object {
+              if (Test-Path $_) {
+                  Remove-Item $_ -Recurse -Force -ErrorAction SilentlyContinue
+                  Write-Host "  🗑️ حُذف registry: $_"
+              }
+          }
+
+          Write-Host "✅ الطبقة 3: حذف Yahoo (extensions + برامج + registry)"
+
+          # ══════════════════════════════════════════
+          #  الطبقة 4: حذف Chrome Preferences القديمة
+          #  (السبب الجذري — محفوظة في صورة الـ runner)
+          # ══════════════════════════════════════════
+          Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+              $profileDir = Join-Path $_.FullName "AppData\Local\Google\Chrome\User Data\Default"
+              if (Test-Path $profileDir) {
+                  @("Preferences","Secure Preferences") | ForEach-Object {
+                      $fp = Join-Path $profileDir $_
+                      if (Test-Path $fp) {
+                          Remove-Item $fp -Force -ErrorAction SilentlyContinue
+                          Write-Host "  🗑️ حُذف: $_ ($($profileDir.Split('\')[2]))"
+                      }
+                  }
+              }
+              # تخطي شاشة الترحيب لجميع المستخدمين
+              $userData = Join-Path $_.FullName "AppData\Local\Google\Chrome\User Data"
+              if (!(Test-Path $userData)) { New-Item -Path $userData -ItemType Directory -Force | Out-Null }
+              "" | Set-Content (Join-Path $userData "First Run") -Force
+          }
+
+          Write-Host "✅ الطبقة 4: حذف Preferences + First Run لجميع المستخدمين"
+
+          # ══════════════════════════════════════════
+          #  الطبقة 5: حماية Registry بـ ACLs
+          # ══════════════════════════════════════════
+          try {
+              $regKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey(
+                  "Software\Policies\Google\Chrome",
+                  [Microsoft.Win32.RegistryKeyPermissionCheck]::ReadWriteSubTree,
+                  [System.Security.AccessControl.RegistryRights]::ChangePermissions
+              )
+              $acl = $regKey.GetAccessControl()
+              $usersRule = New-Object System.Security.AccessControl.RegistryAccessRule(
+                  "BUILTIN\Users", "ReadKey",
+                  "ContainerInherit,ObjectInherit", "None", "Allow"
+              )
+              $acl.AddAccessRule($usersRule)
+              $regKey.SetAccessControl($acl)
+              $regKey.Close()
+              Write-Host "✅ الطبقة 5: حماية Registry بـ ACLs (Users = قراءة فقط)"
+          } catch {
+              Write-Host "⚠️ تعذر ضبط ACLs: $_"
+          }
+
+          # ══════════════════════════════════════════
+          #  الطبقة 6: Watchdog — Scheduled Task كل 30 ثانية
+          # ══════════════════════════════════════════
+          $watchdogContent = @'
+          $pol = "HKLM:\Software\Policies\Google\Chrome"
+          $cur = Get-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL" -ErrorAction SilentlyContinue
+          if ($cur.DefaultSearchProviderSearchURL -notlike "*google.com*") {
+              Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEnabled"    -Value 1        -Type DWord  -Force
+              Set-ItemProperty -Path $pol -Name "DefaultSearchProviderName"       -Value "Google" -Type String -Force
+              Set-ItemProperty -Path $pol -Name "DefaultSearchProviderKeyword"    -Value "google.com" -Type String -Force
+              Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL"  -Value "https://www.google.com/search?q={searchTerms}" -Type String -Force
+              Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSuggestURL" -Value "https://www.google.com/complete/search?client=chrome&q={searchTerms}" -Type String -Force
+              Set-ItemProperty -Path $pol -Name "DefaultSearchProviderIconURL"    -Value "https://www.google.com/favicon.ico" -Type String -Force
+              Set-ItemProperty -Path $pol -Name "DefaultSearchProviderNewTabURL"  -Value "https://www.google.com" -Type String -Force
+              Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEncodings"  -Value "UTF-8"  -Type String -Force
+          }
+          '@
+
+          Set-Content -Path "C:\Users\Public\search_watchdog.ps1" -Value $watchdogContent -Encoding UTF8
+
+          try {
+              $pwshPath = "C:\Program Files\PowerShell\7\pwsh.exe"
+              $action   = New-ScheduledTaskAction -Execute $pwshPath `
+                  -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File C:\Users\Public\search_watchdog.ps1"
+              $trigger  = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(5) `
+                  -RepetitionInterval 00:00:30 -RepetitionDuration 06:00:00
+              $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+              Register-ScheduledTask -TaskName "GoogleSearchWatchdog" `
+                  -Action $action -Trigger $trigger -Settings $settings `
+                  -RunLevel Highest -User "SYSTEM" -Force | Out-Null
+              Write-Host "✅ الطبقة 6: Watchdog مُسجّل (كل 30 ثانية كـ SYSTEM)"
+          } catch {
+              Write-Host "⚠️ تعذر تسجيل Watchdog: $_"
+          }
+
+          Write-Host ""
+          Write-Host "🛡️ اكتمل الدفاع متعدد الطبقات — Google مُجبر نهائياً"
 
       - name: Setup Environment & User
         run: |
@@ -215,6 +354,9 @@ jobs:
 
           New-Item -Path "C:\session_active.lock" -ItemType File -Force | Out-Null
 
+      # ═══════════════════════════════════════════════════════════
+      #  Tailscale + Discord + انتظار + مراقبة محرك البحث كل 30 ث
+      # ═══════════════════════════════════════════════════════════
       - name: Tailscale Connect → Discord → Wait
         shell: pwsh
         run: |
@@ -273,16 +415,50 @@ jobs:
               Write-Host "❌ فشل الويبهوك: $_"
           }
 
+          # ── حلقة الانتظار + مراقبة محرك البحث كل 30 ثانية ──
           Write-Host "⏳ الجلسة نشطة. افتح الرابط من Discord وصادق، ثم اتصل بـ RDP."
+          $polPath   = "HKLM:\Software\Policies\Google\Chrome"
+          $yahooIds  = @("cnmdgidklhhnmpphlfmmopmghfjhgkdi","nljkibfhlpcnanjgbnlnbjecgicbjkge","fpmeembnagmagppkgghhfjfdfajdfcah")
+          $loopCount = 0
+
           while (Test-Path "C:\session_active.lock") {
               Start-Sleep -Seconds 10
+              $loopCount++
+
+              if ($loopCount % 3 -eq 0) {
+                  $cur = Get-ItemProperty -Path $polPath -Name "DefaultSearchProviderSearchURL" -ErrorAction SilentlyContinue
+                  if ($cur.DefaultSearchProviderSearchURL -notlike "*google.com*") {
+                      Write-Host "⚠️ [$((Get-Date).ToString('HH:mm:ss'))] محرك البحث تغير! إعادة ضبط..."
+                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderEnabled"    -Value 1        -Type DWord  -Force
+                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderName"       -Value "Google" -Type String -Force
+                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderKeyword"    -Value "google.com" -Type String -Force
+                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderSearchURL"  -Value "https://www.google.com/search?q={searchTerms}" -Type String -Force
+                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderSuggestURL" -Value "https://www.google.com/complete/search?client=chrome&q={searchTerms}" -Type String -Force
+                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderIconURL"    -Value "https://www.google.com/favicon.ico" -Type String -Force
+                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderNewTabURL"  -Value "https://www.google.com" -Type String -Force
+                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderEncodings"  -Value "UTF-8"  -Type String -Force
+
+                      # حذف Yahoo extensions إن عادت
+                      Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+                          $extDir = Join-Path $_.FullName "AppData\Local\Google\Chrome\User Data\Default\Extensions"
+                          if (Test-Path $extDir) {
+                              foreach ($yid in $yahooIds) {
+                                  $p = Join-Path $extDir $yid
+                                  if (Test-Path $p) { Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue }
+                              }
+                          }
+                      }
+                      Write-Host "✅ أُعيد ضبط Google"
+                  }
+              }
           }
+
           if (Test-Path "C:\session_active.lock") {
               Remove-Item "C:\session_active.lock" -Force
           }
 
       # ═══════════════════════════════════════════════════════════
-      #  تعديل 2: حفظ قسري — يعمل دائماً ولا يعلّق أبداً
+      #  حفظ قسري — يعمل دائماً ولا يعلّق أبداً
       # ═══════════════════════════════════════════════════════════
       - name: Auto-Save (Forced — Never Hangs)
         if: always()
@@ -293,7 +469,7 @@ jobs:
           $launcher   = "C:\Users\Public\Launcher.ps1"
           $lockFile   = "C:\session_active.lock"
           $pwsh       = "C:\Program Files\PowerShell\7\pwsh.exe"
-          $maxWaitSec = 600   # 10 دقائق كحد أقصى — بعدها قتل إجباري
+          $maxWaitSec = 600
 
           if (Test-Path $lockFile) {
               Write-Host "🔄 lock موجود → حفظ تلقائي إجباري..."
@@ -304,7 +480,6 @@ jobs:
                           -ArgumentList "-ExecutionPolicy Bypass -File `"$launcher`" SAVE" `
                           -NoNewWindow -PassThru
 
-                      # انتظار مع مهلة — لا تعلّق للأبد
                       $exited = $proc.WaitForExit($maxWaitSec * 1000)
 
                       if (!$exited) {
