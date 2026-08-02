@@ -52,20 +52,18 @@ jobs:
 
       # ═══════════════════════════════════════════════════════════
       #  دفاع متعدد الطبقات: إجبار Google + تدمير Yahoo
+      #  + إصلاح مدير كلمات المرور / Sync (الإصلاح الجوهري)
       # ═══════════════════════════════════════════════════════════
       - name: Force Google & Destroy Yahoo (All Layers)
         shell: pwsh
         run: |
-          # ── 0) أوقف Chrome إن كان يعمل ──
           Get-Process chrome -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 2
 
-          # ══════════════════════════════════════════
-          #  الطبقة 1: سياسات Chrome الكاملة (managed)
-          # ══════════════════════════════════════════
           $pol = "HKLM:\Software\Policies\Google\Chrome"
           if (!(Test-Path $pol)) { New-Item -Path $pol -Force | Out-Null }
 
+          # ── محرك البحث managed (يتغلب على Sync، لا يحتاج SyncDisabled) ──
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEnabled"    -Value 1        -Type DWord  -Force
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderName"       -Value "Google" -Type String -Force
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderKeyword"    -Value "google.com" -Type String -Force
@@ -75,165 +73,101 @@ jobs:
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderNewTabURL"  -Value "https://www.google.com" -Type String -Force
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEncodings"  -Value "UTF-8"  -Type String -Force
 
-          # منع المزامنة (قد تجلب إعدادات Yahoo من جهاز آخر)
-          Set-ItemProperty -Path $pol -Name "SyncDisabled" -Value 1 -Type DWord -Force
-          # منع أدوات المطور (تمنع التعديل اليدوي عبر Console)
+          # ── ✅ إصلاح كلمات المرور: Sync مسموح + مدير كلمات المرور مفعّل ──
+          # (أُزيل SyncDisabled=1 لأنه كان يمنع جلب كلمات المرور من حساب Google)
+          Set-ItemProperty -Path $pol -Name "PasswordManagerEnabled"   -Value 1 -Type DWord -Force   # مدير/اقتراحات كلمات المرور
+          Set-ItemProperty -Path $pol -Name "BrowserSignin"            -Value 1 -Type DWord -Force   # سماح بتسجيل الدخول بحساب Google (لتفعيل Sync)
+          Set-ItemProperty -Path $pol -Name "AutofillAddressEnabled"   -Value 1 -Type DWord -Force   # ملء تلقائي للعناوين
+          Set-ItemProperty -Path $pol -Name "AutofillCreditCardEnabled"-Value 1 -Type DWord -Force   # ملء تلقائي للبطاقات
+
           Set-ItemProperty -Path $pol -Name "DeveloperToolsAvailability" -Value 1 -Type DWord -Force
-          # منع التبويبات الترويجية
           Set-ItemProperty -Path $pol -Name "PromotionalTabsEnabled" -Value 0 -Type DWord -Force
-          # منع صفحة الترحيب عند التحديث
           Set-ItemProperty -Path $pol -Name "WelcomePageOnOSUpgradeEnabled" -Value 0 -Type DWord -Force
-          # منع العمل في الخلفية
           Set-ItemProperty -Path $pol -Name "BackgroundModeEnabled" -Value 0 -Type DWord -Force
-          # منع التشغيل عند بدء النظام
           Set-ItemProperty -Path $pol -Name "StartupBoostEnabled" -Value 0 -Type DWord -Force
+          Write-Host "✅ الطبقة 1: سياسات Chrome + إصلاح Sync/كلمات المرور"
 
-          Write-Host "✅ الطبقة 1: سياسات Chrome الكاملة"
-
-          # ══════════════════════════════════════════
-          #  الطبقة 2: حظر جميع الإضافات
-          # ══════════════════════════════════════════
           $blockPath = "$pol\ExtensionInstallBlocklist"
           if (!(Test-Path $blockPath)) { New-Item -Path $blockPath -Force | Out-Null }
-          # * = حظر جميع الإضافات (أقوى خيار)
           Set-ItemProperty -Path $blockPath -Name "1" -Value "*" -Type String -Force
-
-          # حظر التثبيت من مصادر خارجية
           $typeBlock = "$pol\ExtensionInstallTypeBlocklist"
           if (!(Test-Path $typeBlock)) { New-Item -Path $typeBlock -Force | Out-Null }
           Set-ItemProperty -Path $typeBlock -Name "1" -Value "development" -Type String -Force
           Set-ItemProperty -Path $typeBlock -Name "2" -Value "sideload"    -Type String -Force
-
           Write-Host "✅ الطبقة 2: حظر جميع الإضافات + التثبيت الخارجي"
 
-          # ══════════════════════════════════════════
-          #  الطبقة 3: حذف Yahoo من كل مكان
-          # ══════════════════════════════════════════
           $yahooIds = @("cnmdgidklhhnmpphlfmmopmghfjhgkdi","nljkibfhlpcnanjgbnlnbjecgicbjkge","fpmeembnagmagppkgghhfjfdfajdfcah")
-
-          # حذف Yahoo extensions من جميع ملفات المستخدمين
           Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
               $extDir = Join-Path $_.FullName "AppData\Local\Google\Chrome\User Data\Default\Extensions"
               if (Test-Path $extDir) {
                   foreach ($yid in $yahooIds) {
                       $p = Join-Path $extDir $yid
-                      if (Test-Path $p) {
-                          Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue
-                          Write-Host "  🗑️ حُذف extension $yid من $($_.Name)"
-                      }
+                      if (Test-Path $p) { Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "  🗑️ extension $yid ($($_.Name))" }
                   }
               }
           }
-
-          # حذف Yahoo من البرامج المثبتة
-          $uninstallKeys = @(
-              "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
-              "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
-          )
+          $uninstallKeys = @("HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*","HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*")
           foreach ($key in $uninstallKeys) {
-              Get-ItemProperty $key -ErrorAction SilentlyContinue |
-                  Where-Object { $_.DisplayName -like "*Yahoo*" } |
-                  ForEach-Object {
-                      if ($_.UninstallString) {
-                          Write-Host "  🗑️ إلغاء تثبيت: $($_.DisplayName)"
-                          $cmd = $_.UninstallString -replace '/I','/X'
-                          Start-Process cmd -ArgumentList "/c `"$cmd`" /S /quiet /norestart" -Wait -NoNewWindow -ErrorAction SilentlyContinue
-                      }
+              Get-ItemProperty $key -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like "*Yahoo*" } | ForEach-Object {
+                  if ($_.UninstallString) {
+                      $cmd = $_.UninstallString -replace '/I','/X'
+                      Start-Process cmd -ArgumentList "/c `"$cmd`" /S /quiet /norestart" -Wait -NoNewWindow -ErrorAction SilentlyContinue
                   }
-          }
-
-          # حذف Yahoo من Registry
-          @("HKLM:\SOFTWARE\Yahoo","HKCU:\SOFTWARE\Yahoo","HKLM:\SOFTWARE\WOW6432Node\Yahoo") | ForEach-Object {
-              if (Test-Path $_) {
-                  Remove-Item $_ -Recurse -Force -ErrorAction SilentlyContinue
-                  Write-Host "  🗑️ حُذف registry: $_"
               }
           }
-
+          @("HKLM:\SOFTWARE\Yahoo","HKCU:\SOFTWARE\Yahoo","HKLM:\SOFTWARE\WOW6432Node\Yahoo") | ForEach-Object {
+              if (Test-Path $_) { Remove-Item $_ -Recurse -Force -ErrorAction SilentlyContinue }
+          }
           Write-Host "✅ الطبقة 3: حذف Yahoo (extensions + برامج + registry)"
 
-          # ══════════════════════════════════════════
-          #  الطبقة 4: حذف Chrome Preferences القديمة
-          #  (السبب الجذري — محفوظة في صورة الـ runner)
-          # ══════════════════════════════════════════
           Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
               $profileDir = Join-Path $_.FullName "AppData\Local\Google\Chrome\User Data\Default"
               if (Test-Path $profileDir) {
                   @("Preferences","Secure Preferences") | ForEach-Object {
                       $fp = Join-Path $profileDir $_
-                      if (Test-Path $fp) {
-                          Remove-Item $fp -Force -ErrorAction SilentlyContinue
-                          Write-Host "  🗑️ حُذف: $_ ($($profileDir.Split('\')[2]))"
-                      }
+                      if (Test-Path $fp) { Remove-Item $fp -Force -ErrorAction SilentlyContinue }
                   }
               }
-              # تخطي شاشة الترحيب لجميع المستخدمين
               $userData = Join-Path $_.FullName "AppData\Local\Google\Chrome\User Data"
               if (!(Test-Path $userData)) { New-Item -Path $userData -ItemType Directory -Force | Out-Null }
               "" | Set-Content (Join-Path $userData "First Run") -Force
           }
+          Write-Host "✅ الطبقة 4: حذف Preferences + First Run (تسجيل الدخول متاح عبر أيقونة البروفايل)"
 
-          Write-Host "✅ الطبقة 4: حذف Preferences + First Run لجميع المستخدمين"
-
-          # ══════════════════════════════════════════
-          #  الطبقة 5: حماية Registry بـ ACLs
-          # ══════════════════════════════════════════
           try {
-              $regKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey(
-                  "Software\Policies\Google\Chrome",
-                  [Microsoft.Win32.RegistryKeyPermissionCheck]::ReadWriteSubTree,
-                  [System.Security.AccessControl.RegistryRights]::ChangePermissions
-              )
+              $regKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey("Software\Policies\Google\Chrome",[Microsoft.Win32.RegistryKeyPermissionCheck]::ReadWriteSubTree,[System.Security.AccessControl.RegistryRights]::ChangePermissions)
               $acl = $regKey.GetAccessControl()
-              $usersRule = New-Object System.Security.AccessControl.RegistryAccessRule(
-                  "BUILTIN\Users", "ReadKey",
-                  "ContainerInherit,ObjectInherit", "None", "Allow"
-              )
+              $usersRule = New-Object System.Security.AccessControl.RegistryAccessRule("BUILTIN\Users","ReadKey","ContainerInherit,ObjectInherit","None","Allow")
               $acl.AddAccessRule($usersRule)
-              $regKey.SetAccessControl($acl)
-              $regKey.Close()
-              Write-Host "✅ الطبقة 5: حماية Registry بـ ACLs (Users = قراءة فقط)"
-          } catch {
-              Write-Host "⚠️ تعذر ضبط ACLs: $_"
-          }
+              $regKey.SetAccessControl($acl); $regKey.Close()
+              Write-Host "✅ الطبقة 5: حماية Registry بـ ACLs"
+          } catch { Write-Host "⚠️ تعذر ضبط ACLs: $_" }
 
-          # ══════════════════════════════════════════
-          #  الطبقة 6: Watchdog — Scheduled Task كل 30 ثانية
-          # ══════════════════════════════════════════
           $watchdogContent = @'
           $pol = "HKLM:\Software\Policies\Google\Chrome"
           $cur = Get-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL" -ErrorAction SilentlyContinue
           if ($cur.DefaultSearchProviderSearchURL -notlike "*google.com*") {
-              Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEnabled"    -Value 1        -Type DWord  -Force
-              Set-ItemProperty -Path $pol -Name "DefaultSearchProviderName"       -Value "Google" -Type String -Force
-              Set-ItemProperty -Path $pol -Name "DefaultSearchProviderKeyword"    -Value "google.com" -Type String -Force
-              Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL"  -Value "https://www.google.com/search?q={searchTerms}" -Type String -Force
-              Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSuggestURL" -Value "https://www.google.com/complete/search?client=chrome&q={searchTerms}" -Type String -Force
-              Set-ItemProperty -Path $pol -Name "DefaultSearchProviderIconURL"    -Value "https://www.google.com/favicon.ico" -Type String -Force
-              Set-ItemProperty -Path $pol -Name "DefaultSearchProviderNewTabURL"  -Value "https://www.google.com" -Type String -Force
-              Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEncodings"  -Value "UTF-8"  -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEnabled"    -Value 1        -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderName"       -Value "Google" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderKeyword"    -Value "google.com" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL"  -Value "https://www.google.com/search?q={searchTerms}" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSuggestURL" -Value "https://www.google.com/complete/search?client=chrome&q={searchTerms}" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderIconURL"    -Value "https://www.google.com/favicon.ico" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderNewTabURL"  -Value "https://www.google.com" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEncodings"  -Value "UTF-8"  -Type String -Force
           }
           '@
-
           Set-Content -Path "C:\Users\Public\search_watchdog.ps1" -Value $watchdogContent -Encoding UTF8
-
           try {
               $pwshPath = "C:\Program Files\PowerShell\7\pwsh.exe"
-              $action   = New-ScheduledTaskAction -Execute $pwshPath `
-                  -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File C:\Users\Public\search_watchdog.ps1"
-              $trigger  = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(5) `
-                  -RepetitionInterval 00:00:30 -RepetitionDuration 06:00:00
+              $action   = New-ScheduledTaskAction -Execute $pwshPath -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File C:\Users\Public\search_watchdog.ps1"
+              $trigger  = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(5) -RepetitionInterval 00:00:30 -RepetitionDuration 06:00:00
               $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
-              Register-ScheduledTask -TaskName "GoogleSearchWatchdog" `
-                  -Action $action -Trigger $trigger -Settings $settings `
-                  -RunLevel Highest -User "SYSTEM" -Force | Out-Null
+              Register-ScheduledTask -TaskName "GoogleSearchWatchdog" -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -User "SYSTEM" -Force | Out-Null
               Write-Host "✅ الطبقة 6: Watchdog مُسجّل (كل 30 ثانية كـ SYSTEM)"
-          } catch {
-              Write-Host "⚠️ تعذر تسجيل Watchdog: $_"
-          }
+          } catch { Write-Host "⚠️ تعذر تسجيل Watchdog: $_" }
 
-          Write-Host ""
-          Write-Host "🛡️ اكتمل الدفاع متعدد الطبقات — Google مُجبر نهائياً"
+          Write-Host "🛡️ اكتمل الدفاع متعدد الطبقات — Google مُجبر + كلمات المرور مفعّلة"
 
       - name: Setup Environment & User
         run: |
@@ -355,19 +289,48 @@ jobs:
           New-Item -Path "C:\session_active.lock" -ItemType File -Force | Out-Null
 
       # ═══════════════════════════════════════════════════════════
-      #  Tailscale + Discord + انتظار + مراقبة محرك البحث كل 30 ث
+      #  Tailscale + Discord + لوحة حفظ عن بُعد (💾) + انتظار
       # ═══════════════════════════════════════════════════════════
       - name: Tailscale Connect → Discord → Wait
         shell: pwsh
         run: |
           $webhookUrl = "https://discord.com/api/webhooks/1530298811593785405/i7bwlK9fbDlwFp2cJN2Z2rwnFBAnoUbwjmMoxY8mak2lyKnR4Q5Kp04cvyW-2GynZQ6W"
 
+          $C_IDLE = 10070709; $C_BUSY = 16426522; $C_OK = 5763719; $C_FAIL = 15548997
+          function Send-Ctrl($wh, $title, $desc, $color) {
+          $body = @{ embeds = @( @{ title = $title; description = $desc; color = $color } ) } | ConvertTo-Json -Depth 6
+          $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+          try { $r = Invoke-RestMethod -Uri ($wh + '?wait=true') -Method POST -Body $bytes -ContentType 'application/json; charset=utf-8'; return $r.id } catch { Write-Host "⚠️ فشل إرسال لوحة التحكم: $_"; return $null }
+          }
+          function Get-Reacted($wh, $id) {
+          if (-not $id) { return $false }
+          try { $m = Invoke-RestMethod -Uri ($wh + '/messages/' + $id) -Method GET; if ($m.reactions) { return [bool]($m.reactions | Where-Object { $_.emoji.name -eq '💾' }) } } catch { }
+          return $false
+          }
+          function Set-Ctrl($wh, $id, $title, $desc, $color) {
+          if (-not $id) { return }
+          $body = @{ embeds = @( @{ title = $title; description = $desc; color = $color } ) } | ConvertTo-Json -Depth 6
+          $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+          try { Invoke-RestMethod -Uri ($wh + '/messages/' + $id) -Method PATCH -Body $bytes -ContentType 'application/json; charset=utf-8' | Out-Null } catch { }
+          }
+          function Invoke-RemoteSave($wh, $id, $label) {
+          Set-Ctrl $wh $id "⏳ جاري الحفظ $label" "تتم عملية الرفع الآن — لا تغلق شيئاً حتى ترى ✅ أو ❌." $C_BUSY
+          $pwsh = "C:\Program Files\PowerShell\7\pwsh.exe"
+          $launcher = "C:\Users\Public\Launcher.ps1"
+          if (-not (Test-Path $launcher)) { Set-Ctrl $wh $id "❌ فشل الحفظ" "Launcher.ps1 غير موجود على الجهاز." $C_FAIL; return $false }
+          try {
+          $p = Start-Process -FilePath $pwsh -ArgumentList "-ExecutionPolicy Bypass -File `"$launcher`" SAVE" -NoNewWindow -PassThru
+          $ok = $p.WaitForExit(600000)
+          if (-not $ok) { $p.Kill(); Start-Sleep 2; Set-Ctrl $wh $id "❌ فشل الحفظ" "انتهت مهلة الرفع (10 د) — قُتلت العملية." $C_FAIL; return $false }
+          if ($p.ExitCode -eq 0) { Set-Ctrl $wh $id "✅ تم الحفظ بنجاح" "اكتمل رفع الملفات. الجلسة في طريقها للإنهاء." $C_OK; return $true }
+          else { Set-Ctrl $wh $id "❌ فشل الحفظ" "رمز الخروج: $($p.ExitCode). جرّب زر SAVE على سطح المكتب." $C_FAIL; return $false }
+          } catch { Set-Ctrl $wh $id "❌ فشل الحفظ" $_.Exception.Message $C_FAIL; return $false }
+          }
+
           $tsExe = "C:\Program Files\Tailscale\tailscale.exe"
           if (!(Test-Path $tsExe)) { $tsExe = (Get-Command tailscale -ErrorAction SilentlyContinue).Source }
 
-          Start-Process -FilePath $tsExe `
-            -ArgumentList @("up","--hostname=HACKER-STATION") `
-            -NoNewWindow -PassThru | Out-Null
+          Start-Process -FilePath $tsExe -ArgumentList @("up","--hostname=HACKER-STATION") -NoNewWindow -PassThru | Out-Null
 
           Write-Host "⏳ بانتظار توليد رابط المصادقة..."
           Start-Sleep -Seconds 5
@@ -381,51 +344,35 @@ jobs:
               try {
                   $fullJson = & $tsExe status --json 2>&1 | Out-String
                   $st = $fullJson | ConvertFrom-Json -ErrorAction Stop
-                  if ($st.AuthURL) {
-                      $loginUrl = $st.AuthURL
-                      Write-Host "✅ AuthURL: $loginUrl"
-                      break
-                  }
+                  if ($st.AuthURL) { $loginUrl = $st.AuthURL; Write-Host "✅ AuthURL: $loginUrl"; break }
                   Write-Host "  محاولة $($i+1): BackendState=$($st.BackendState)"
-              } catch {
-                  Write-Host "  محاولة $($i+1): $($_.Exception.Message)"
-              }
+              } catch { Write-Host "  محاولة $($i+1): $($_.Exception.Message)" }
           }
 
           $textStatus = & $tsExe status 2>&1 | Out-String
 
           $content = ""
-          if ($loginUrl) {
-              $content += "🔗 $loginUrl`n"
-          } else {
-              $content += "❌ لم يُعثر على AuthURL`n"
-          }
+          if ($loginUrl) { $content += "🔗 $loginUrl`n" } else { $content += "❌ لم يُعثر على AuthURL`n" }
           $content += "`n📋 **tailscale status:**`n``````$textStatus``````"
           $content += "`n📦 **Full JSON:**`n``````json`n$fullJson`n``````"
-
-          if ($content.Length -gt 1995) {
-              $content = $content.Substring(0, 1995) + "`n...(truncated)"
-          }
+          if ($content.Length -gt 1995) { $content = $content.Substring(0, 1995) + "`n...(truncated)" }
 
           $body = @{ content = $content } | ConvertTo-Json
-          try {
-              Invoke-RestMethod -Uri $webhookUrl -Method POST -Body $body -ContentType "application/json" | Out-Null
-              Write-Host "✅ أُرسلت البيانات إلى Discord"
-          } catch {
-              Write-Host "❌ فشل الويبهوك: $_"
-          }
+          try { Invoke-RestMethod -Uri $webhookUrl -Method POST -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) -ContentType 'application/json; charset=utf-8' | Out-Null; Write-Host "✅ أُرسلت البيانات إلى Discord" } catch { Write-Host "❌ فشل الويبهوك: $_" }
 
-          # ── حلقة الانتظار + مراقبة محرك البحث كل 30 ثانية ──
+          $ctrlId = Send-Ctrl $webhookUrl "💾 لوحة الحفظ عن بُعد" "لحفظ عملك **وإنهاء الجلسة** عن بُعد، أضف reaction **💾** على هذه الرسالة (يعمل كزر حفظ).`nستتغيّر هذه اللوحة لتُظهر: ⏳ جاري → ✅ تم → ❌ فشل.`n`nالحالة: ⏸️ في انتظار أمرك" $C_IDLE
+
           Write-Host "⏳ الجلسة نشطة. افتح الرابط من Discord وصادق، ثم اتصل بـ RDP."
           $polPath   = "HKLM:\Software\Policies\Google\Chrome"
           $yahooIds  = @("cnmdgidklhhnmpphlfmmopmghfjhgkdi","nljkibfhlpcnanjgbnlnbjecgicbjkge","fpmeembnagmagppkgghhfjfdfajdfcah")
           $loopCount = 0
+          $saveHandled = $false
 
           while (Test-Path "C:\session_active.lock") {
-              Start-Sleep -Seconds 10
+              Start-Sleep -Seconds 5
               $loopCount++
 
-              if ($loopCount % 3 -eq 0) {
+              if ($loopCount % 6 -eq 0) {
                   $cur = Get-ItemProperty -Path $polPath -Name "DefaultSearchProviderSearchURL" -ErrorAction SilentlyContinue
                   if ($cur.DefaultSearchProviderSearchURL -notlike "*google.com*") {
                       Write-Host "⚠️ [$((Get-Date).ToString('HH:mm:ss'))] محرك البحث تغير! إعادة ضبط..."
@@ -437,69 +384,89 @@ jobs:
                       Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderIconURL"    -Value "https://www.google.com/favicon.ico" -Type String -Force
                       Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderNewTabURL"  -Value "https://www.google.com" -Type String -Force
                       Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderEncodings"  -Value "UTF-8"  -Type String -Force
-
-                      # حذف Yahoo extensions إن عادت
                       Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
                           $extDir = Join-Path $_.FullName "AppData\Local\Google\Chrome\User Data\Default\Extensions"
-                          if (Test-Path $extDir) {
-                              foreach ($yid in $yahooIds) {
-                                  $p = Join-Path $extDir $yid
-                                  if (Test-Path $p) { Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue }
-                              }
-                          }
+                          if (Test-Path $extDir) { foreach ($yid in $yahooIds) { $p = Join-Path $extDir $yid; if (Test-Path $p) { Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue } } }
                       }
-                      Write-Host "✅ أُعيد ضبط Google"
                   }
+              }
+
+              if (-not $saveHandled -and (Get-Reacted $webhookUrl $ctrlId)) {
+                  $saveHandled = $true
+                  Write-Host "💾 زُر الحفظ عن بُعد — بدء الحفظ..."
+                  Invoke-RemoteSave $webhookUrl $ctrlId "(عن بُعد)" | Out-Null
+                  Start-Sleep -Seconds 3
+                  break
               }
           }
 
-          if (Test-Path "C:\session_active.lock") {
-              Remove-Item "C:\session_active.lock" -Force
-          }
+          if (Test-Path "C:\session_active.lock") { Remove-Item "C:\session_active.lock" -Force }
 
       # ═══════════════════════════════════════════════════════════
-      #  حفظ قسري — يعمل دائماً ولا يعلّق أبداً
+      #  حفظ قسري + نافذة 15 دقيقة عبر زر 💾 (لا يعلّق أبداً)
       # ═══════════════════════════════════════════════════════════
-      - name: Auto-Save (Forced — Never Hangs)
+      - name: Auto-Save (Forced + 15min Remote Button)
         if: always()
         continue-on-error: true
-        timeout-minutes: 15
+        timeout-minutes: 28
         shell: pwsh
         run: |
+          $webhookUrl = "https://discord.com/api/webhooks/1530298811593785405/i7bwlK9fbDlwFp2cJN2Z2rwnFBAnoUbwjmMoxY8mak2lyKnR4Q5Kp04cvyW-2GynZQ6W"
           $launcher   = "C:\Users\Public\Launcher.ps1"
           $lockFile   = "C:\session_active.lock"
-          $pwsh       = "C:\Program Files\PowerShell\7\pwsh.exe"
-          $maxWaitSec = 600
+
+          $C_IDLE = 10070709; $C_BUSY = 16426522; $C_OK = 5763719; $C_FAIL = 15548997
+          function Send-Ctrl($wh, $title, $desc, $color) {
+          $body = @{ embeds = @( @{ title = $title; description = $desc; color = $color } ) } | ConvertTo-Json -Depth 6
+          $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+          try { $r = Invoke-RestMethod -Uri ($wh + '?wait=true') -Method POST -Body $bytes -ContentType 'application/json; charset=utf-8'; return $r.id } catch { return $null }
+          }
+          function Get-Reacted($wh, $id) {
+          if (-not $id) { return $false }
+          try { $m = Invoke-RestMethod -Uri ($wh + '/messages/' + $id) -Method GET; if ($m.reactions) { return [bool]($m.reactions | Where-Object { $_.emoji.name -eq '💾' }) } } catch { }
+          return $false
+          }
+          function Set-Ctrl($wh, $id, $title, $desc, $color) {
+          if (-not $id) { return }
+          $body = @{ embeds = @( @{ title = $title; description = $desc; color = $color } ) } | ConvertTo-Json -Depth 6
+          $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+          try { Invoke-RestMethod -Uri ($wh + '/messages/' + $id) -Method PATCH -Body $bytes -ContentType 'application/json; charset=utf-8' | Out-Null } catch { }
+          }
+          function Invoke-RemoteSave($wh, $id, $label) {
+          Set-Ctrl $wh $id "⏳ جاري الحفظ $label" "تتم عملية الرفع الآن — لا تغلق شيئاً حتى ترى ✅ أو ❌." $C_BUSY
+          $pwsh = "C:\Program Files\PowerShell\7\pwsh.exe"
+          if (-not (Test-Path $launcher)) { Set-Ctrl $wh $id "❌ فشل الحفظ" "Launcher.ps1 غير موجود." $C_FAIL; return $false }
+          try {
+          $p = Start-Process -FilePath $pwsh -ArgumentList "-ExecutionPolicy Bypass -File `"$launcher`" SAVE" -NoNewWindow -PassThru
+          $ok = $p.WaitForExit(600000)
+          if (-not $ok) { $p.Kill(); Start-Sleep 2; Set-Ctrl $wh $id "❌ فشل الحفظ" "انتهت مهلة الرفع (10 د)." $C_FAIL; return $false }
+          if ($p.ExitCode -eq 0) { Set-Ctrl $wh $id "✅ تم الحفظ بنجاح" "اكتمل رفع الملفات. تُغلق الجلسة الآن." $C_OK; return $true }
+          else { Set-Ctrl $wh $id "❌ فشل الحفظ" "رمز الخروج: $($p.ExitCode)." $C_FAIL; return $false }
+          } catch { Set-Ctrl $wh $id "❌ فشل الحفظ" $_.Exception.Message $C_FAIL; return $false }
+          }
 
           if (Test-Path $lockFile) {
-              Write-Host "🔄 lock موجود → حفظ تلقائي إجباري..."
+              Write-Host "🔄 lock موجود → فتح نافذة الحفظ النهائية (15 د)..."
 
-              if (Test-Path $launcher) {
-                  try {
-                      $proc = Start-Process -FilePath $pwsh `
-                          -ArgumentList "-ExecutionPolicy Bypass -File `"$launcher`" SAVE" `
-                          -NoNewWindow -PassThru
+              $ctrlId = Send-Ctrl $webhookUrl "⏰ نافذة الحفظ النهائية" "الجلسة انتهت/أُلغيت.`nأضف reaction **💾** لبدء الحفظ **فوراً**.`nإن لم تضغط خلال **15 دقيقة**، يبدأ الحفظ القسري تلقائياً.`n`nالحالة: ⏳ بانتظارك" $C_BUSY
 
-                      $exited = $proc.WaitForExit($maxWaitSec * 1000)
+              $deadline  = (Get-Date).AddSeconds(900)
+              $triggered = $false
+              while ((Get-Date) -lt $deadline) {
+                  Start-Sleep -Seconds 5
+                  if (Get-Reacted $webhookUrl $ctrlId) { $triggered = $true; Write-Host "💾 زُر الحفظ في النافذة النهائية"; break }
+              }
 
-                      if (!$exited) {
-                          Write-Host "⚠️ انتهت المهلة ($maxWaitSec ث) → قتل إجباري"
-                          $proc.Kill()
-                          Start-Sleep -Seconds 2
-                          Write-Host "⛔ قُتلت عملية الحفظ"
-                      } else {
-                          Write-Host "✅ الحفظ اكتمل (Exit Code: $($proc.ExitCode))"
-                      }
-                  } catch {
-                      Write-Host "❌ خطأ في الحفظ: $_"
-                  }
+              if ($triggered) {
+                  Invoke-RemoteSave $webhookUrl $ctrlId "(بطلبك)" | Out-Null
               } else {
-                  Write-Host "⚠️ Launcher.ps1 غير موجود — تخطي"
+                  Set-Ctrl $webhookUrl $ctrlId "⏰ انتهى الوقت — حفظ قسري" "لم يُرصد أمر خلال 15 د، بدء الحفظ التلقائي الإجباري..." $C_BUSY
+                  Invoke-RemoteSave $webhookUrl $ctrlId "(قسري)" | Out-Null
               }
 
               Remove-Item $lockFile -Force -ErrorAction SilentlyContinue
           } else {
-              Write-Host "✅ lock غير موجود → الحفظ تم يدوياً مسبقاً — تخطي"
+              Write-Host "✅ lock غير موجود → الحفظ تم مسبقاً (يدوياً/عن بُعد) — تخطي"
           }
 
           Write-Host "🏁 انتهت الخطوة — الـ workflow يُغلق الآن"
