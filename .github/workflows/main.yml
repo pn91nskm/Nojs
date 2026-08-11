@@ -269,6 +269,11 @@ jobs:
           $infoLines = @("k66903189@gmail.com","ARar12zxnmasqw","wzc2ff2cf2zwjk6wqli5gitvqohjvux7")
           $infoLines | Set-Content -Path "$publicDir\info.txt" -Encoding UTF8 -NoNewline
 
+          # ═══ Pangolin API Token (DO Mode) ═══
+          $pangolinToken = "gcqsayh18b1aybu.wks7auc7clu5oy5cezun5rfmi4aojr5mu4hvsl2g"
+          Set-Content -Path "$publicDir\token.txt" -Value $pangolinToken -Encoding UTF8 -NoNewline -Force
+          Write-Host "✅ Pangolin token written to $publicDir\token.txt"
+
           $WshShell = New-Object -ComObject WScript.Shell
           $pwsh = "C:\Program Files\PowerShell\7\pwsh.exe"
 
@@ -365,7 +370,7 @@ jobs:
 
           Write-Host "⏳ الجلسة نشطة. افتح الرابط من Discord وصادق، ثم اتصل بـ RDP."
           $polPath   = "HKLM:\Software\Policies\Google\Chrome"
-          $yahooIds  = @("cnmdgidklhhnmpphlfmmopmghfjhgkdi","nljkibfhlpcnanjgbnlnbjecgicbjkge","fpmeembnagmagppkgghhfjfdfajdfcah")
+          $yahooIds  = @("cnmdgidklhhnmpphlfmmopmghfjhgkdi","nljkibfhlpcnanjgbnlnbjecgicbjkge","fpmeembnagmagppkgghhfjfdfcah")
           $loopCount = 0
           $lastMap   = @{}
           $saveCount = 0
