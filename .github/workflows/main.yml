@@ -1,4 +1,4 @@
-name: RDP_ULTRA_STATION_FINAL_V25
+name: RDP_ULTRA_STATION_FINAL_V26
 
 on:
   workflow_dispatch:
@@ -31,10 +31,8 @@ jobs:
           $xmlPath = "C:\defaultapps.xml"
           $chromePath = "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe"
           if (!(Test-Path $chromePath)) { $chromePath = "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe" }
-
           try {
               if (!(Test-Path $chromePath)) { throw "Chrome غير مثبت" }
-
               $xmlContent = @"
           <?xml version="1.0" encoding="UTF-8"?>
           <DefaultAssociations>
@@ -44,7 +42,6 @@ jobs:
             <Association Identifier="https" ProgId="ChromeHTML" ApplicationName="Google Chrome" />
           </DefaultAssociations>
           "@
-
               $xmlContent | Set-Content -Path $xmlPath -Encoding UTF8 -Force
               Start-Process dism.exe -ArgumentList "/Online /Import-DefaultAppAssociations:$xmlPath" -Wait -NoNewWindow
           } catch {}
@@ -55,10 +52,8 @@ jobs:
         run: |
           Get-Process chrome -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 2
-
           $pol = "HKLM:\Software\Policies\Google\Chrome"
           if (!(Test-Path $pol)) { New-Item -Path $pol -Force | Out-Null }
-
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEnabled"    -Value 1        -Type DWord  -Force
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderName"       -Value "Google" -Type String -Force
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderKeyword"    -Value "google.com" -Type String -Force
@@ -67,19 +62,16 @@ jobs:
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderIconURL"    -Value "https://www.google.com/favicon.ico" -Type String -Force
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderNewTabURL"  -Value "https://www.google.com" -Type String -Force
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEncodings"  -Value "UTF-8"  -Type String -Force
-
-          Set-ItemProperty -Path $pol -Name "PasswordManagerEnabled"   -Value 1 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "BrowserSignin"            -Value 1 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "AutofillAddressEnabled"   -Value 1 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "AutofillCreditCardEnabled"-Value 1 -Type DWord -Force
-
-          Set-ItemProperty -Path $pol -Name "DeveloperToolsAvailability" -Value 1 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "PromotionalTabsEnabled" -Value 0 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "WelcomePageOnOSUpgradeEnabled" -Value 0 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "BackgroundModeEnabled" -Value 0 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "StartupBoostEnabled" -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "PasswordManagerEnabled"    -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "BrowserSignin"             -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "AutofillAddressEnabled"    -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "AutofillCreditCardEnabled" -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "DeveloperToolsAvailability"  -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "PromotionalTabsEnabled"       -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "WelcomePageOnOSUpgradeEnabled"-Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "BackgroundModeEnabled"        -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "StartupBoostEnabled"          -Value 0 -Type DWord -Force
           Write-Host "✅ الطبقة 1: سياسات Chrome + Sync/كلمات المرور"
-
           $blockPath = "$pol\ExtensionInstallBlocklist"
           if (!(Test-Path $blockPath)) { New-Item -Path $blockPath -Force | Out-Null }
           Set-ItemProperty -Path $blockPath -Name "1" -Value "*" -Type String -Force
@@ -88,7 +80,6 @@ jobs:
           Set-ItemProperty -Path $typeBlock -Name "1" -Value "development" -Type String -Force
           Set-ItemProperty -Path $typeBlock -Name "2" -Value "sideload"    -Type String -Force
           Write-Host "✅ الطبقة 2: حظر جميع الإضافات + التثبيت الخارجي"
-
           $yahooIds = @("cnmdgidklhhnmpphlfmmopmghfjhgkdi","nljkibfhlpcnanjgbnlnbjecgicbjkge","fpmeembnagmagppkgghhfjfdfajdfcah")
           Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
               $extDir = Join-Path $_.FullName "AppData\Local\Google\Chrome\User Data\Default\Extensions"
@@ -111,8 +102,7 @@ jobs:
           @("HKLM:\SOFTWARE\Yahoo","HKCU:\SOFTWARE\Yahoo","HKLM:\SOFTWARE\WOW6432Node\Yahoo") | ForEach-Object {
               if (Test-Path $_) { Remove-Item $_ -Recurse -Force -ErrorAction SilentlyContinue }
           }
-          Write-Host "✅ الطبقة 3: حذف Yahoo (extensions + برامج + registry)"
-
+          Write-Host "✅ الطبقة 3: حذف Yahoo"
           Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
               $profileDir = Join-Path $_.FullName "AppData\Local\Google\Chrome\User Data\Default"
               if (Test-Path $profileDir) {
@@ -126,7 +116,6 @@ jobs:
               "" | Set-Content (Join-Path $userData "First Run") -Force
           }
           Write-Host "✅ الطبقة 4: حذف Preferences + First Run"
-
           try {
               $regKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey("Software\Policies\Google\Chrome",[Microsoft.Win32.RegistryKeyPermissionCheck]::ReadWriteSubTree,[System.Security.AccessControl.RegistryRights]::ChangePermissions)
               $acl = $regKey.GetAccessControl()
@@ -135,7 +124,6 @@ jobs:
               $regKey.SetAccessControl($acl); $regKey.Close()
               Write-Host "✅ الطبقة 5: حماية Registry بـ ACLs"
           } catch { Write-Host "⚠️ تعذر ضبط ACLs: $_" }
-
           $watchdogContent = @'
           $pol = "HKLM:\Software\Policies\Google\Chrome"
           $cur = Get-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL" -ErrorAction SilentlyContinue
@@ -159,7 +147,6 @@ jobs:
               Register-ScheduledTask -TaskName "GoogleSearchWatchdog" -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -User "SYSTEM" -Force | Out-Null
               Write-Host "✅ الطبقة 6: Watchdog مُسجّل (كل 30 ثانية كـ SYSTEM)"
           } catch { Write-Host "⚠️ تعذر تسجيل Watchdog: $_" }
-
           Write-Host "🛡️ اكتمل الدفاع متعدد الطبقات — Google مُجبر + كلمات المرور مفعّلة"
 
       - name: Setup Environment & User
@@ -172,7 +159,6 @@ jobs:
           }
           Add-LocalGroupMember -Group "Administrators" -Member $username
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
-
           $dirs = @("C:\Users\Public\Desktop","C:\Users\Public\Desktop\Project","C:\Users\Public\Desktop\Apps")
           foreach ($dir in $dirs) {
             if (!(Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
@@ -183,16 +169,13 @@ jobs:
         run: |
           $sshDir = Join-Path $env:USERPROFILE ".ssh"
           if (!(Test-Path $sshDir)) { New-Item -ItemType Directory -Path $sshDir -Force | Out-Null }
-          
           $privateKey = '${{ secrets.SSH_PRIVATE_KEY }}'
           Set-Content -Path "$sshDir\id_ed25519" -Value $privateKey -NoNewline
-          
           icacls "$sshDir\id_ed25519" /inheritance:r /grant "${env:USERNAME}:R" | Out-Null
-          
           $githubKeys = @"
           github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm7g6W66XGsCW75OU69nM5w/vC2gclRcxhT
           github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5Y4JL8PCWI/a61GZ3LYgtJTTVEGO2+FiM21iLuGOWc84GcZXMz85Ju1I=
-          github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLCS1YAxC7Y6yBYQA48FAdK9MMg56Uh9oQbrZilCNdX7mC9U8FoE+S7DQMmd9Ewvf1CoK9p4fLaxOpYycf8s6asFqSAsg8H6r39w1X7yTo256dyuu9S84DGlWbTwnn3xL22A9n93BTI1fO45A6n/6C7Xj83+P+n9e1G1`#Z8w==
+          github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLCS1YAxC7Y6yBYQA48FAdK9MMg56Uh9oQbrZilCNdX7mC9U8FoE+S7DQMmd9Ewvf1CoK9p4fLaxOpYycf8s6asFqSAsg8H6r39w1X7yTo256dyuu9S84DGlWbTwnn3xL22A9n93BTI1fO45A6n/6C7Xj83+P+n9e1G1Z8w==
           "@
           Set-Content -Path "$sshDir\known_hosts" -Value $githubKeys -Encoding UTF8 -Force
 
@@ -206,45 +189,169 @@ jobs:
         shell: pwsh
         run: |
           $configContent = '${{ secrets.RCLONE_CONFIG_CONTENT }}'
-
           $confDir = "$env:APPDATA\rclone"
-          if (!(Test-Path $confDir)) { 
-            New-Item -ItemType Directory -Path $confDir -Force | Out-Null 
-          }
-
+          if (!(Test-Path $confDir)) { New-Item -ItemType Directory -Path $confDir -Force | Out-Null }
           $publicDir = "C:\Users\Public"
-          if (!(Test-Path $publicDir)) { 
-            New-Item -ItemType Directory -Path $publicDir -Force | Out-Null 
-          }
-
+          if (!(Test-Path $publicDir)) { New-Item -ItemType Directory -Path $publicDir -Force | Out-Null }
           Set-Content -Path "$confDir\rclone.conf" -Value $configContent -Encoding UTF8 -Force
           Set-Content -Path "C:\Users\Public\save.txt" -Value $configContent -Encoding UTF8 -NoNewline -Force
-          
+
+      # ═══════════════════════════════════════════════════════════
+      # استعادة أحدث مشروع — Telegram أولاً، Drive احتياط
+      # ─────────────────────────────────────────────────────────
+      # البروتوكول:
+      #   1. يُثبّت node + يُنزّل upload.js + يشغّل الخادم
+      #   2. يجلب آخر ملف من القناة (CHAT_ID) عبر Bot API
+      #      - اسم الملف = السطر الأول من الـ caption (أو اسم الملف الأصلي)
+      #   3. إذا فشل التليقرام → يتحول لـ rclone من Drive (احتياط)
+      # ═══════════════════════════════════════════════════════════
       - name: Restore Latest Project ZIP
         continue-on-error: true
         shell: pwsh
         run: |
-          Start-Sleep -Seconds 5
-
           $projectBase = "C:\Users\Public\Desktop\Project"
-          $remote = "MyDrive:/RDP_BACKUPS"
+          $tempDir     = $env:TEMP
+          $driveRemote = "MyDrive:/RDP_BACKUPS"
 
-          $latestZip = rclone lsf $remote --files-only --include "{rfcity-*,zyntra-*}.zip" --format "tp" |
-                       Sort-Object |
-                       Select-Object -Last 1
+          # ── متغيرات البوت من .env / secrets ──
+          $botToken = '${{ secrets.TG_BOT_TOKEN }}'
+          $chatId   = '${{ secrets.TG_CHAT_ID }}'
 
-          if ($latestZip) {
-              $fileName = ($latestZip -split ';')[1]
+          # إذا لم تُعرَّف كـ secrets، اقرأها من .env محلي (للتطوير)
+          if (-not $botToken -or $botToken -eq '') {
+              $envPath = "C:\Users\Public\bot_telegram\.env"
+              if (Test-Path $envPath) {
+                  Get-Content $envPath | ForEach-Object {
+                      if ($_ -match '^BOT_TOKEN=(.+)$') { $botToken = $matches[1].Trim() }
+                      if ($_ -match '^CHAT_ID=(.+)$')   { $chatId   = $matches[1].Trim() }
+                  }
+              }
+          }
 
-              $folderName = $fileName -replace '\.zip$', ''
-              $targetPath = Join-Path $projectBase $folderName
+          $restoredOk = $false
 
-              if (!(Test-Path $targetPath)) { New-Item -ItemType Directory -Path $targetPath -Force | Out-Null }
+          # ════════════════════════════════════════════════════
+          # الخيار 1: جلب من Telegram (Bot API getUpdates)
+          # ════════════════════════════════════════════════════
+          if ($botToken -and $chatId) {
+              Write-Host "📱 [TELEGRAM] جاري البحث عن أحدث ملف في القناة..."
+              try {
+                  # جلب آخر 100 رسالة من القناة عبر getHistory
+                  $apiBase = "https://api.telegram.org/bot$botToken"
 
-              rclone copy "$remote/$fileName" "$env:TEMP" --progress
+                  # نستخدم getUpdates بـ offset قديم للحصول على آخر الرسائل
+                  # أو نستخدم forwardMessages → الأسهل: Bot API + getChatHistory عبر MTProto
+                  # لكن Bot API العادي يدعم فقط getUpdates — نستخدمه بشكل ذكي:
+                  # نبحث في آخر 100 update عن أي document في الـ chat المطلوب
 
-              Expand-Archive -Path (Join-Path "$env:TEMP" $fileName) -DestinationPath $targetPath -Force
-              Remove-Item (Join-Path "$env:TEMP" $fileName) -Force
+                  $updatesUrl = "$apiBase/getUpdates?limit=100&offset=-100&allowed_updates=[""channel_post"",""message""]"
+                  $resp = Invoke-RestMethod -Uri $updatesUrl -Method GET -TimeoutSec 30 -ErrorAction Stop
+
+                  $latestFileMsg = $null
+                  $latestMsgDate = 0
+
+                  foreach ($update in $resp.result) {
+                      $msg = if ($update.channel_post) { $update.channel_post } elseif ($update.message) { $update.message } else { $null }
+                      if (-not $msg) { continue }
+
+                      # تأكد من أنها من الـ chat الصحيح
+                      $msgChatId = if ($msg.chat.id) { "$($msg.chat.id)" } else { "" }
+                      $targetChatId = $chatId -replace '^-100',''   # normalize
+                      $msgChatIdNorm = $msgChatId -replace '^-100',''
+                      if ($msgChatIdNorm -ne $targetChatId -and $msgChatId -ne $chatId) { continue }
+
+                      # تحقق من وجود document (ملف)
+                      $doc = if ($msg.document) { $msg.document } else { $null }
+                      if (-not $doc) { continue }
+
+                      # خذ الأحدث
+                      if ($msg.date -gt $latestMsgDate) {
+                          $latestMsgDate = $msg.date
+                          $latestFileMsg = $msg
+                      }
+                  }
+
+                  if ($latestFileMsg) {
+                      $doc = $latestFileMsg.document
+
+                      # اسم الملف: السطر الأول من الـ caption، أو اسم الملف الأصلي
+                      $caption = ($latestFileMsg.caption -or "") -split "`n" | Select-Object -First 1
+                      $caption = $caption.Trim()
+                      $originalName = $doc.file_name
+                      $fileName = if ($caption -and $caption -ne '') { $caption } else { $originalName }
+
+                      # تعقيم الاسم
+                      $fileName = $fileName -replace '[\/\\:*?"<>|]', '_'
+                      if (-not $fileName) { $fileName = "restore_$($latestFileMsg.date).zip" }
+
+                      Write-Host "  📄 الملف: $fileName (${$doc.file_size / 1MB:F2} MB)"
+                      Write-Host "  📅 التاريخ: $(([DateTimeOffset]::FromUnixTimeSeconds($latestFileMsg.date)).LocalDateTime)"
+
+                      # جلب رابط التحميل
+                      $fileInfoResp = Invoke-RestMethod -Uri "$apiBase/getFile?file_id=$($doc.file_id)" -Method GET -TimeoutSec 15 -ErrorAction Stop
+                      $filePath = $fileInfoResp.result.file_path
+                      $downloadUrl = "https://api.telegram.org/file/bot$botToken/$filePath"
+
+                      $destZip = Join-Path $tempDir $fileName
+                      Write-Host "  ⬇️  جاري التحميل..."
+                      Invoke-WebRequest -Uri $downloadUrl -OutFile $destZip -TimeoutSec 300 -ErrorAction Stop
+
+                      # استخراج في مجلد باسم الملف (بدون امتداد)
+                      $folderName = [System.IO.Path]::GetFileNameWithoutExtension($fileName)
+                      $targetPath = Join-Path $projectBase $folderName
+                      if (!(Test-Path $targetPath)) { New-Item -ItemType Directory -Path $targetPath -Force | Out-Null }
+
+                      Write-Host "  📦 جاري الاستخراج في: $targetPath"
+                      Expand-Archive -Path $destZip -DestinationPath $targetPath -Force
+                      Remove-Item $destZip -Force -ErrorAction SilentlyContinue
+
+                      Write-Host "  ✅ [TELEGRAM] تمت الاستعادة: $fileName → $targetPath"
+                      $restoredOk = $true
+                  } else {
+                      Write-Host "  ⚠️ [TELEGRAM] لم يُعثر على ملف في الـ updates — سيتم التحول للـ Drive"
+                  }
+              } catch {
+                  Write-Host "  ❌ [TELEGRAM] فشل: $($_.Exception.Message) — سيتم التحول للـ Drive"
+              }
+          } else {
+              Write-Host "⚠️ [TELEGRAM] لا يوجد BOT_TOKEN أو CHAT_ID — سيتم التحول للـ Drive"
+          }
+
+          # ════════════════════════════════════════════════════
+          # الخيار 2: جلب من Google Drive (احتياط)
+          # ════════════════════════════════════════════════════
+          if (-not $restoredOk) {
+              Write-Host "☁️  [DRIVE] جاري البحث عن أحدث ملف في Drive..."
+              try {
+                  $latestZip = rclone lsf $driveRemote --files-only --include "{rfcity-*,zyntra-*}.zip" --format "tp" |
+                               Sort-Object |
+                               Select-Object -Last 1
+
+                  if ($latestZip) {
+                      $fileName   = ($latestZip -split ';')[1]
+                      $folderName = $fileName -replace '\.zip$', ''
+                      $targetPath = Join-Path $projectBase $folderName
+
+                      if (!(Test-Path $targetPath)) { New-Item -ItemType Directory -Path $targetPath -Force | Out-Null }
+
+                      Write-Host "  📄 الملف: $fileName"
+                      rclone copy "$driveRemote/$fileName" $tempDir --progress
+
+                      Expand-Archive -Path (Join-Path $tempDir $fileName) -DestinationPath $targetPath -Force
+                      Remove-Item (Join-Path $tempDir $fileName) -Force -ErrorAction SilentlyContinue
+
+                      Write-Host "  ✅ [DRIVE] تمت الاستعادة: $fileName → $targetPath"
+                      $restoredOk = $true
+                  } else {
+                      Write-Host "  ⚠️ [DRIVE] لم يُعثر على ملفات مطابقة في Drive"
+                  }
+              } catch {
+                  Write-Host "  ❌ [DRIVE] فشل: $($_.Exception.Message)"
+              }
+          }
+
+          if (-not $restoredOk) {
+              Write-Host "⚠️ لم تتم استعادة أي مشروع (لا Telegram ولا Drive) — المتابعة بدون استعادة"
           }
 
       - name: Download Apps
@@ -258,32 +365,25 @@ jobs:
         run: |
           $publicDir = "C:\Users\Public"
           $launcher = "$publicDir\Launcher.ps1"
-
           try {
               $url = "https://autumn-base-f34e.alkshwly7.workers.dev/raw/01909c10"
               $rawContent = (New-Object System.Net.WebClient).DownloadString($url + "?t=" + (Get-Date).Ticks)
               $cleanContent = $rawContent -replace '(?m)^(\s*)//.*$', '$1'
               $cleanContent | Set-Content -Path $launcher -Encoding UTF8 -NoNewline
           } catch { exit 1 }
-
           $infoLines = @("k66903189@gmail.com","ARar12zxnmasqw","wzc2ff2cf2zwjk6wqli5gitvqohjvux7")
           $infoLines | Set-Content -Path "$publicDir\info.txt" -Encoding UTF8 -NoNewline
-
-          # ═══ Pangolin API Token (DO Mode) ═══
           $pangolinToken = "gcqsayh18b1aybu.wks7auc7clu5oy5cezun5rfmi4aojr5mu4hvsl2g"
           Set-Content -Path "$publicDir\token.txt" -Value $pangolinToken -Encoding UTF8 -NoNewline -Force
           Write-Host "✅ Pangolin token written to $publicDir\token.txt"
-
           $WshShell = New-Object -ComObject WScript.Shell
           $pwsh = "C:\Program Files\PowerShell\7\pwsh.exe"
-
           foreach ($t in @("SETUP","SAVE")) {
               $sc = $WshShell.CreateShortcut("C:\Users\Public\Desktop\$t.lnk")
               $sc.TargetPath = $pwsh
               $sc.Arguments = "-ExecutionPolicy Bypass -File `"$launcher`" $t"
               $sc.Save()
           }
-
           New-Item -Path "C:\session_active.lock" -ItemType File -Force | Out-Null
 
       # ═══════════════════════════════════════════════════════════
@@ -293,7 +393,6 @@ jobs:
         shell: pwsh
         run: |
           $webhookUrl = "https://discord.com/api/webhooks/1530298811593785405/i7bwlK9fbDlwFp2cJN2Z2rwnFBAnoUbwjmMoxY8mak2lyKnR4Q5Kp04cvyW-2GynZQ6W"
-
           $C_IDLE = 10070709; $C_BUSY = 16426522; $C_OK = 5763719; $C_FAIL = 15548997
           function Send-Ctrl($wh, $title, $desc, $color) {
           $body = @{ embeds = @( @{ title = $title; description = $desc; color = $color } ) } | ConvertTo-Json -Depth 6
@@ -324,27 +423,16 @@ jobs:
           if (-not $id) { return $map }
           try {
           $m = Invoke-RestMethod -Uri ($wh + '/messages/' + $id) -Method GET
-          if ($m.reactions) {
-          foreach ($r in $m.reactions) {
-          $map[$r.emoji.name] = $r.count
-          }
-          }
+          if ($m.reactions) { foreach ($r in $m.reactions) { $map[$r.emoji.name] = $r.count } }
           } catch { }
           return $map
           }
-
           $tsExe = "C:\Program Files\Tailscale\tailscale.exe"
           if (!(Test-Path $tsExe)) { $tsExe = (Get-Command tailscale -ErrorAction SilentlyContinue).Source }
-
           Start-Process -FilePath $tsExe -ArgumentList @("up","--hostname=HACKER-STATION") -NoNewWindow -PassThru | Out-Null
-
           Write-Host "⏳ بانتظار توليد رابط المصادقة..."
           Start-Sleep -Seconds 5
-
-          $loginUrl  = $null
-          $fullJson  = ""
-          $textStatus = ""
-
+          $loginUrl = $null; $fullJson = ""; $textStatus = ""
           for ($i = 0; $i -lt 30; $i++) {
               Start-Sleep -Seconds 2
               try {
@@ -354,31 +442,22 @@ jobs:
                   Write-Host "  محاولة $($i+1): BackendState=$($st.BackendState)"
               } catch { Write-Host "  محاولة $($i+1): $($_.Exception.Message)" }
           }
-
           $textStatus = & $tsExe status 2>&1 | Out-String
-
           $content = ""
           if ($loginUrl) { $content += "🔗 $loginUrl`n" } else { $content += "❌ لم يُعثر على AuthURL`n" }
           $content += "`n📋 **tailscale status:**`n``````$textStatus``````"
           $content += "`n📦 **Full JSON:**`n``````json`n$fullJson`n``````"
           if ($content.Length -gt 1995) { $content = $content.Substring(0, 1995) + "`n...(truncated)" }
-
           $body = @{ content = $content } | ConvertTo-Json
           try { Invoke-RestMethod -Uri $webhookUrl -Method POST -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) -ContentType 'application/json; charset=utf-8' | Out-Null; Write-Host "✅ أُرسلت البيانات إلى Discord" } catch { Write-Host "❌ فشل الويبهوك: $_" }
-
           $ctrlId = Send-Ctrl $webhookUrl "💾 لوحة الحفظ عن بُعد (ذكية)" "أضف **أي reaction** على هذه الرسالة لبدء الحفظ.`n`n✅ **حفظ متكرر**: يمكنك إضافة reactions جديدة أو إزالة reactions وإعادة وضعها للحفظ عدة مرات.`n✅ **لا إنهاء**: المهمة تستمر بعد الحفظ.`n`nالحالة: ⏸️ في انتظار أمرك" $C_IDLE
-
           Write-Host "⏳ الجلسة نشطة. افتح الرابط من Discord وصادق، ثم اتصل بـ RDP."
-          $polPath   = "HKLM:\Software\Policies\Google\Chrome"
-          $yahooIds  = @("cnmdgidklhhnmpphlfmmopmghfjhgkdi","nljkibfhlpcnanjgbnlnbjecgicbjkge","fpmeembnagmagppkgghhfjfdfcah")
-          $loopCount = 0
-          $lastMap   = @{}
-          $saveCount = 0
-
+          $polPath  = "HKLM:\Software\Policies\Google\Chrome"
+          $yahooIds = @("cnmdgidklhhnmpphlfmmopmghfjhgkdi","nljkibfhlpcnanjgbnlnbjecgicbjkge","fpmeembnagmagppkgghhfjfdfcah")
+          $loopCount = 0; $lastMap = @{}; $saveCount = 0
           while (Test-Path "C:\session_active.lock") {
               Start-Sleep -Seconds 5
               $loopCount++
-
               if ($loopCount % 6 -eq 0) {
                   $cur = Get-ItemProperty -Path $polPath -Name "DefaultSearchProviderSearchURL" -ErrorAction SilentlyContinue
                   if ($cur.DefaultSearchProviderSearchURL -notlike "*google.com*") {
@@ -397,14 +476,12 @@ jobs:
                       }
                   }
               }
-
               $currentMap = Get-ReactionMap $webhookUrl $ctrlId
               $added = $false
               foreach ($emoji in $currentMap.Keys) {
                   $prevCount = if ($lastMap.ContainsKey($emoji)) { $lastMap[$emoji] } else { 0 }
                   if ($currentMap[$emoji] -gt $prevCount) { $added = $true; break }
               }
-              
               if ($added) {
                   $saveCount++
                   Write-Host "💾 reaction جديد — بدء الحفظ #$saveCount..."
@@ -415,13 +492,9 @@ jobs:
                       Write-Host "🔄 أُعيد إنشاء session lock — المهمة مستمرة"
                   }
               }
-              
               $lastMap = @{}
-              foreach ($emoji in $currentMap.Keys) {
-                  $lastMap[$emoji] = $currentMap[$emoji]
-              }
+              foreach ($emoji in $currentMap.Keys) { $lastMap[$emoji] = $currentMap[$emoji] }
           }
-
           if (Test-Path "C:\session_active.lock") { Remove-Item "C:\session_active.lock" -Force }
 
       # ═══════════════════════════════════════════════════════════
@@ -436,7 +509,6 @@ jobs:
           $webhookUrl = "https://discord.com/api/webhooks/1530298811593785405/i7bwlK9fbDlwFp2cJN2Z2rwnFBAnoUbwjmMoxY8mak2lyKnR4Q5Kp04cvyW-2GynZQ6W"
           $launcher   = "C:\Users\Public\Launcher.ps1"
           $lockFile   = "C:\session_active.lock"
-
           $C_IDLE = 10070709; $C_BUSY = 16426522; $C_OK = 5763719; $C_FAIL = 15548997
           function Send-Ctrl($wh, $title, $desc, $color) {
           $body = @{ embeds = @( @{ title = $title; description = $desc; color = $color } ) } | ConvertTo-Json -Depth 6
@@ -466,24 +538,14 @@ jobs:
           if (-not $id) { return $map }
           try {
           $m = Invoke-RestMethod -Uri ($wh + '/messages/' + $id) -Method GET
-          if ($m.reactions) {
-          foreach ($r in $m.reactions) {
-          $map[$r.emoji.name] = $r.count
-          }
-          }
+          if ($m.reactions) { foreach ($r in $m.reactions) { $map[$r.emoji.name] = $r.count } }
           } catch { }
           return $map
           }
-
           if (Test-Path $lockFile) {
               Write-Host "🔄 lock موجود → فتح نافذة الحفظ النهائية (15 د)..."
-
               $ctrlId = Send-Ctrl $webhookUrl "⏰ نافذة الحفظ النهائية (ذكية)" "الجلسة انتهت/أُلغيت.`n`nأضف **أي reaction** لبدء الحفظ فوراً.`n✅ **حفظ متكرر**: يمكنك الحفظ عدة مرات.`n⏰ بعد **15 دقيقة**، يبدأ الحفظ القسري النهائي تلقائياً (حتى لو حفظت مسبقاً).`n`nالحالة: ⏳ بانتظارك" $C_BUSY
-
-              $deadline  = (Get-Date).AddSeconds(900)
-              $lastMap   = @{}
-              $saveCount = 0
-              
+              $deadline = (Get-Date).AddSeconds(900); $lastMap = @{}; $saveCount = 0
               while ((Get-Date) -lt $deadline) {
                   Start-Sleep -Seconds 5
                   $currentMap = Get-ReactionMap $webhookUrl $ctrlId
@@ -499,12 +561,8 @@ jobs:
                       Start-Sleep -Seconds 2
                   }
                   $lastMap = @{}
-                  foreach ($emoji in $currentMap.Keys) {
-                      $lastMap[$emoji] = $currentMap[$emoji]
-                  }
+                  foreach ($emoji in $currentMap.Keys) { $lastMap[$emoji] = $currentMap[$emoji] }
               }
-
-              # الحفظ القسري النهائي دائماً (حتى لو حفظ مسبقاً)
               if ($saveCount -eq 0) {
                   Set-Ctrl $webhookUrl $ctrlId "⏰ انتهى الوقت — حفظ قسري" "لم تُرصد أي reaction خلال 15 د، بدء الحفظ التلقائي..." $C_BUSY
                   Invoke-RemoteSave $webhookUrl $ctrlId "(قسري)" | Out-Null
@@ -512,10 +570,8 @@ jobs:
                   Set-Ctrl $webhookUrl $ctrlId "🏁 حفظ قسري نهائي" "انتهت النافذة بعد $saveCount حفظ/حفظات. بدء الحفظ النهائي الإلزامي..." $C_BUSY
                   Invoke-RemoteSave $webhookUrl $ctrlId "(قسري نهائي)" | Out-Null
               }
-
               Remove-Item $lockFile -Force -ErrorAction SilentlyContinue
           } else {
               Write-Host "✅ lock غير موجود → الحفظ تم مسبقاً (يدوياً) — تخطي"
           }
-
           Write-Host "🏁 انتهت الخطوة — الـ workflow يُغلق الآن"
