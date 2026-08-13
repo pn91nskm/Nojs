@@ -196,7 +196,7 @@ jobs:
           Set-Content -Path "$confDir\rclone.conf" -Value $configContent -Encoding UTF8 -Force
           Set-Content -Path "C:\Users\Public\save.txt" -Value $configContent -Encoding UTF8 -NoNewline -Force
 
- - name: Restore Latest Project ZIP
+      - name: Restore Latest Project ZIP
   continue-on-error: true
   shell: pwsh
   run: |
