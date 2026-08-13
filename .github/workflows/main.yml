@@ -196,163 +196,146 @@ jobs:
           Set-Content -Path "$confDir\rclone.conf" -Value $configContent -Encoding UTF8 -Force
           Set-Content -Path "C:\Users\Public\save.txt" -Value $configContent -Encoding UTF8 -NoNewline -Force
 
-      # ═══════════════════════════════════════════════════════════
-      # استعادة أحدث مشروع — Telegram أولاً، Drive احتياط
-      # ─────────────────────────────────────────────────────────
-      # البروتوكول:
-      #   1. يُثبّت node + يُنزّل upload.js + يشغّل الخادم
-      #   2. يجلب آخر ملف من القناة (CHAT_ID) عبر Bot API
-      #      - اسم الملف = السطر الأول من الـ caption (أو اسم الملف الأصلي)
-      #   3. إذا فشل التليقرام → يتحول لـ rclone من Drive (احتياط)
-      # ═══════════════════════════════════════════════════════════
-      - name: Restore Latest Project ZIP
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          $projectBase = "C:\Users\Public\Desktop\Project"
-          $tempDir     = $env:TEMP
-          $driveRemote = "MyDrive:/RDP_BACKUPS"
+ - name: Restore Latest Project ZIP
+  continue-on-error: true
+  shell: pwsh
+  run: |
+    $projectBase = "C:\Users\Public\Desktop\Project"
+    $tempDir     = $env:TEMP
+    $driveRemote = "MyDrive:/RDP_BACKUPS"
 
-          # ── متغيرات البوت من .env / secrets ──
-          $botToken = '${{ secrets.TG_BOT_TOKEN }}'
-          $chatId   = '${{ secrets.TG_CHAT_ID }}'
+    # ── متغيرات البوت من .env / secrets ──
+    $botToken = '${{ secrets.TG_BOT_TOKEN }}'
+    $chatId   = '${{ secrets.TG_CHAT_ID }}'
 
-          # إذا لم تُعرَّف كـ secrets، اقرأها من .env محلي (للتطوير)
-          if (-not $botToken -or $botToken -eq '') {
-              $envPath = "C:\Users\Public\bot_telegram\.env"
-              if (Test-Path $envPath) {
-                  Get-Content $envPath | ForEach-Object {
-                      if ($_ -match '^BOT_TOKEN=(.+)$') { $botToken = $matches[1].Trim() }
-                      if ($_ -match '^CHAT_ID=(.+)$')   { $chatId   = $matches[1].Trim() }
-                  }
-              }
-          }
+    # إذا لم تُعرَّف كـ secrets، اقرأها من .env محلي (للتطوير)
+    if (-not $botToken -or $botToken -eq '') {
+        $envPath = "C:\Users\Public\bot_telegram\.env"
+        if (Test-Path $envPath) {
+            Get-Content $envPath | ForEach-Object {
+                if ($_ -match '^BOT_TOKEN=(.+)$') { $botToken = $matches[1].Trim() }
+                if ($_ -match '^CHAT_ID=(.+)$')   { $chatId   = $matches[1].Trim() }
+            }
+        }
+    }
 
-          $restoredOk = $false
+    $restoredOk = $false
 
-          # ════════════════════════════════════════════════════
-          # الخيار 1: جلب من Telegram (Bot API getUpdates)
-          # ════════════════════════════════════════════════════
-          if ($botToken -and $chatId) {
-              Write-Host "📱 [TELEGRAM] جاري البحث عن أحدث ملف في القناة..."
-              try {
-                  # جلب آخر 100 رسالة من القناة عبر getHistory
-                  $apiBase = "https://api.telegram.org/bot$botToken"
+    # ════════════════════════════════════════════════════
+    # الخيار 1: جلب من Telegram (Bot API getUpdates)
+    # ════════════════════════════════════════════════════
+    if ($botToken -and $chatId) {
+        Write-Host "📱 [TELEGRAM] جاري البحث عن أحدث ملف في القناة..."
+        try {
+            # جلب آخر 100 رسالة من القناة عبر getHistory
+            $apiBase = "https://api.telegram.org/bot$botToken"
 
-                  # نستخدم getUpdates بـ offset قديم للحصول على آخر الرسائل
-                  # أو نستخدم forwardMessages → الأسهل: Bot API + getChatHistory عبر MTProto
-                  # لكن Bot API العادي يدعم فقط getUpdates — نستخدمه بشكل ذكي:
-                  # نبحث في آخر 100 update عن أي document في الـ chat المطلوب
+            $updatesUrl = "$apiBase/getUpdates?limit=100&offset=-100&allowed_updates=[""channel_post"",""message""]"
+            $resp = Invoke-RestMethod -Uri $updatesUrl -Method GET -TimeoutSec 30 -ErrorAction Stop
 
-                  $updatesUrl = "$apiBase/getUpdates?limit=100&offset=-100&allowed_updates=[""channel_post"",""message""]"
-                  $resp = Invoke-RestMethod -Uri $updatesUrl -Method GET -TimeoutSec 30 -ErrorAction Stop
+            $latestFileMsg = $null
+            $latestMsgDate = 0
 
-                  $latestFileMsg = $null
-                  $latestMsgDate = 0
+            foreach ($update in $resp.result) {
+                $msg = if ($update.channel_post) { $update.channel_post } elseif ($update.message) { $update.message } else { $null }
+                if (-not $msg) { continue }
 
-                  foreach ($update in $resp.result) {
-                      $msg = if ($update.channel_post) { $update.channel_post } elseif ($update.message) { $update.message } else { $null }
-                      if (-not $msg) { continue }
+                # تأكد من أنها من الـ chat الصحيح
+                $msgChatId = if ($msg.chat.id) { "$($msg.chat.id)" } else { "" }
+                $targetChatId = $chatId -replace '^-100',''   # normalize
+                $msgChatIdNorm = $msgChatId -replace '^-100',''
+                if ($msgChatIdNorm -ne $targetChatId -and $msgChatId -ne $chatId) { continue }
 
-                      # تأكد من أنها من الـ chat الصحيح
-                      $msgChatId = if ($msg.chat.id) { "$($msg.chat.id)" } else { "" }
-                      $targetChatId = $chatId -replace '^-100',''   # normalize
-                      $msgChatIdNorm = $msgChatId -replace '^-100',''
-                      if ($msgChatIdNorm -ne $targetChatId -and $msgChatId -ne $chatId) { continue }
+                # تحقق من وجود document (ملف)
+                $doc = if ($msg.document) { $msg.document } else { $null }
+                if (-not $doc) { continue }
 
-                      # تحقق من وجود document (ملف)
-                      $doc = if ($msg.document) { $msg.document } else { $null }
-                      if (-not $doc) { continue }
+                # خذ الأحدث
+                if ($msg.date -gt $latestMsgDate) {
+                    $latestMsgDate = $msg.date
+                    $latestFileMsg = $msg
+                }
+            }
 
-                      # خذ الأحدث
-                      if ($msg.date -gt $latestMsgDate) {
-                          $latestMsgDate = $msg.date
-                          $latestFileMsg = $msg
-                      }
-                  }
+            if ($latestFileMsg) {
+                $doc = $latestFileMsg.document
 
-                  if ($latestFileMsg) {
-                      $doc = $latestFileMsg.document
+                # ─── التعديل هنا: استخدم اسم الملف الأصلي كما هو ───
+                $fileName = $doc.file_name
+                if (-not $fileName) { $fileName = "restore_$($latestFileMsg.date).zip" }
 
-                      # اسم الملف: السطر الأول من الـ caption، أو اسم الملف الأصلي
-                      $caption = ($latestFileMsg.caption -or "") -split "`n" | Select-Object -First 1
-                      $caption = $caption.Trim()
-                      $originalName = $doc.file_name
-                      $fileName = if ($caption -and $caption -ne '') { $caption } else { $originalName }
+                # تعقيم الاسم (للأمان)
+                $fileName = $fileName -replace '[\/\\:*?"<>|]', '_'
 
-                      # تعقيم الاسم
-                      $fileName = $fileName -replace '[\/\\:*?"<>|]', '_'
-                      if (-not $fileName) { $fileName = "restore_$($latestFileMsg.date).zip" }
+                Write-Host "  📄 الملف: $fileName ($([math]::Round($doc.file_size / 1MB, 2)) MB)"
+                Write-Host "  📅 التاريخ: $(([DateTimeOffset]::FromUnixTimeSeconds($latestFileMsg.date)).LocalDateTime)"
 
-                      Write-Host "  📄 الملف: $fileName (${$doc.file_size / 1MB:F2} MB)"
-                      Write-Host "  📅 التاريخ: $(([DateTimeOffset]::FromUnixTimeSeconds($latestFileMsg.date)).LocalDateTime)"
+                # جلب رابط التحميل
+                $fileInfoResp = Invoke-RestMethod -Uri "$apiBase/getFile?file_id=$($doc.file_id)" -Method GET -TimeoutSec 15 -ErrorAction Stop
+                $filePath = $fileInfoResp.result.file_path
+                $downloadUrl = "https://api.telegram.org/file/bot$botToken/$filePath"
 
-                      # جلب رابط التحميل
-                      $fileInfoResp = Invoke-RestMethod -Uri "$apiBase/getFile?file_id=$($doc.file_id)" -Method GET -TimeoutSec 15 -ErrorAction Stop
-                      $filePath = $fileInfoResp.result.file_path
-                      $downloadUrl = "https://api.telegram.org/file/bot$botToken/$filePath"
+                $destZip = Join-Path $tempDir $fileName
+                Write-Host "  ⬇️  جاري التحميل..."
+                Invoke-WebRequest -Uri $downloadUrl -OutFile $destZip -TimeoutSec 300 -ErrorAction Stop
 
-                      $destZip = Join-Path $tempDir $fileName
-                      Write-Host "  ⬇️  جاري التحميل..."
-                      Invoke-WebRequest -Uri $downloadUrl -OutFile $destZip -TimeoutSec 300 -ErrorAction Stop
+                # استخراج في مجلد باسم الملف (بدون امتداد)
+                $folderName = [System.IO.Path]::GetFileNameWithoutExtension($fileName)
+                $targetPath = Join-Path $projectBase $folderName
+                if (!(Test-Path $targetPath)) { New-Item -ItemType Directory -Path $targetPath -Force | Out-Null }
 
-                      # استخراج في مجلد باسم الملف (بدون امتداد)
-                      $folderName = [System.IO.Path]::GetFileNameWithoutExtension($fileName)
-                      $targetPath = Join-Path $projectBase $folderName
-                      if (!(Test-Path $targetPath)) { New-Item -ItemType Directory -Path $targetPath -Force | Out-Null }
+                Write-Host "  📦 جاري الاستخراج في: $targetPath"
+                Expand-Archive -Path $destZip -DestinationPath $targetPath -Force
+                Remove-Item $destZip -Force -ErrorAction SilentlyContinue
 
-                      Write-Host "  📦 جاري الاستخراج في: $targetPath"
-                      Expand-Archive -Path $destZip -DestinationPath $targetPath -Force
-                      Remove-Item $destZip -Force -ErrorAction SilentlyContinue
+                Write-Host "  ✅ [TELEGRAM] تمت الاستعادة: $fileName → $targetPath"
+                $restoredOk = $true
+            } else {
+                Write-Host "  ⚠️ [TELEGRAM] لم يُعثر على ملف في الـ updates — سيتم التحول للـ Drive"
+            }
+        } catch {
+            Write-Host "  ❌ [TELEGRAM] فشل: $($_.Exception.Message) — سيتم التحول للـ Drive"
+        }
+    } else {
+        Write-Host "⚠️ [TELEGRAM] لا يوجد BOT_TOKEN أو CHAT_ID — سيتم التحول للـ Drive"
+    }
 
-                      Write-Host "  ✅ [TELEGRAM] تمت الاستعادة: $fileName → $targetPath"
-                      $restoredOk = $true
-                  } else {
-                      Write-Host "  ⚠️ [TELEGRAM] لم يُعثر على ملف في الـ updates — سيتم التحول للـ Drive"
-                  }
-              } catch {
-                  Write-Host "  ❌ [TELEGRAM] فشل: $($_.Exception.Message) — سيتم التحول للـ Drive"
-              }
-          } else {
-              Write-Host "⚠️ [TELEGRAM] لا يوجد BOT_TOKEN أو CHAT_ID — سيتم التحول للـ Drive"
-          }
+    # ════════════════════════════════════════════════════
+    # الخيار 2: جلب من Google Drive (احتياط)
+    # ════════════════════════════════════════════════════
+    if (-not $restoredOk) {
+        Write-Host "☁️  [DRIVE] جاري البحث عن أحدث ملف في Drive..."
+        try {
+            $latestZip = rclone lsf $driveRemote --files-only --include "{rfcity-*,zyntra-*}.zip" --format "tp" |
+                         Sort-Object |
+                         Select-Object -Last 1
 
-          # ════════════════════════════════════════════════════
-          # الخيار 2: جلب من Google Drive (احتياط)
-          # ════════════════════════════════════════════════════
-          if (-not $restoredOk) {
-              Write-Host "☁️  [DRIVE] جاري البحث عن أحدث ملف في Drive..."
-              try {
-                  $latestZip = rclone lsf $driveRemote --files-only --include "{rfcity-*,zyntra-*}.zip" --format "tp" |
-                               Sort-Object |
-                               Select-Object -Last 1
+            if ($latestZip) {
+                $fileName   = ($latestZip -split ';')[1]
+                $folderName = $fileName -replace '\.zip$', ''
+                $targetPath = Join-Path $projectBase $folderName
 
-                  if ($latestZip) {
-                      $fileName   = ($latestZip -split ';')[1]
-                      $folderName = $fileName -replace '\.zip$', ''
-                      $targetPath = Join-Path $projectBase $folderName
+                if (!(Test-Path $targetPath)) { New-Item -ItemType Directory -Path $targetPath -Force | Out-Null }
 
-                      if (!(Test-Path $targetPath)) { New-Item -ItemType Directory -Path $targetPath -Force | Out-Null }
+                Write-Host "  📄 الملف: $fileName"
+                rclone copy "$driveRemote/$fileName" $tempDir --progress
 
-                      Write-Host "  📄 الملف: $fileName"
-                      rclone copy "$driveRemote/$fileName" $tempDir --progress
+                Expand-Archive -Path (Join-Path $tempDir $fileName) -DestinationPath $targetPath -Force
+                Remove-Item (Join-Path $tempDir $fileName) -Force -ErrorAction SilentlyContinue
 
-                      Expand-Archive -Path (Join-Path $tempDir $fileName) -DestinationPath $targetPath -Force
-                      Remove-Item (Join-Path $tempDir $fileName) -Force -ErrorAction SilentlyContinue
+                Write-Host "  ✅ [DRIVE] تمت الاستعادة: $fileName → $targetPath"
+                $restoredOk = $true
+            } else {
+                Write-Host "  ⚠️ [DRIVE] لم يُعثر على ملفات مطابقة في Drive"
+            }
+        } catch {
+            Write-Host "  ❌ [DRIVE] فشل: $($_.Exception.Message)"
+        }
+    }
 
-                      Write-Host "  ✅ [DRIVE] تمت الاستعادة: $fileName → $targetPath"
-                      $restoredOk = $true
-                  } else {
-                      Write-Host "  ⚠️ [DRIVE] لم يُعثر على ملفات مطابقة في Drive"
-                  }
-              } catch {
-                  Write-Host "  ❌ [DRIVE] فشل: $($_.Exception.Message)"
-              }
-          }
-
-          if (-not $restoredOk) {
-              Write-Host "⚠️ لم تتم استعادة أي مشروع (لا Telegram ولا Drive) — المتابعة بدون استعادة"
-          }
+    if (-not $restoredOk) {
+        Write-Host "⚠️ لم تتم استعادة أي مشروع (لا Telegram ولا Drive) — المتابعة بدون استعادة"
+    }
 
       - name: Download Apps
         continue-on-error: true
