@@ -80,7 +80,7 @@ jobs:
           Set-ItemProperty -Path $typeBlock -Name "1" -Value "development" -Type String -Force
           Set-ItemProperty -Path $typeBlock -Name "2" -Value "sideload"    -Type String -Force
           Write-Host "✅ الطبقة 2: حظر جميع الإضافات + التثبيت الخارجي"
-          $yahooIds = @("cnmdgidklhhnmpphlfmmopmghfjhgkdi","nljkibfhlpcnanjgbnlnbjecgicbjkge","fpmeembnagmagppkgghhfjfdfajdfcah")
+          $yahooIds = @("cnmdgidklhhnmpphlfmmopmghfjhgkdi","nljkibfhlpcnanjgbnlnbjecgicbjkge","fpmeembnagmagppkgghhfjfdfcah")
           Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
               $extDir = Join-Path $_.FullName "AppData\Local\Google\Chrome\User Data\Default\Extensions"
               if (Test-Path $extDir) {
@@ -223,52 +223,74 @@ jobs:
 
           # ════════════════════════════════════════════════════
           # الخيار 1: جلب من Telegram (Bot API getUpdates)
+          # ✅ تم الإصلاح: إزالة offset=-100 التي كانت تستهلك الـ updates
           # ════════════════════════════════════════════════════
           if ($botToken -and $chatId) {
               Write-Host "📱 [TELEGRAM] جاري البحث عن أحدث ملف في القناة..."
+              Write-Host "   🔑 Bot Token: $($botToken.Substring(0, 8))***"
+              Write-Host "   🆔 Chat ID: $chatId"
+              
               try {
-                  # جلب آخر 100 رسالة من القناة عبر getHistory
                   $apiBase = "https://api.telegram.org/bot$botToken"
 
-                  $updatesUrl = "$apiBase/getUpdates?limit=100&offset=-100&allowed_updates=[""channel_post"",""message""]"
-                  $resp = Invoke-RestMethod -Uri $updatesUrl -Method GET -TimeoutSec 30 -ErrorAction Stop
+                  # ✅ الإصلاح الجوهري: إزالة offset=-100
+                  # السبب: offset=-100 يقوم بتأكيد (consume) آخر 100 update ومسحها من طابور البوت
+                  # مما يجعلها لا تعود في الاستدعاءات التالية
+                  $updatesUrl = "$apiBase/getUpdates?limit=100&allowed_updates=[`"channel_post`",`"message`"]"
+                  
+                  # ✅ زيادة Timeout لأن getUpdates يدعم Long Polling
+                  $resp = Invoke-RestMethod -Uri $updatesUrl -Method GET -TimeoutSec 60 -ErrorAction Stop
+
+                  $updateCount = if ($resp.result) { $resp.result.Count } else { 0 }
+                  Write-Host "   📊 تم استلام $updateCount update من Telegram"
+
+                  if ($updateCount -eq 0) {
+                      Write-Host "   ⚠️ لا توجد updates متاحة. قد تكون:"
+                      Write-Host "      1) البوت غير مضاف كأدمن في القناة"
+                      Write-Host "      2) الرسائل استُهلكت مسبقاً (من webhook أو استدعاء سابق)"
+                      Write-Host "      3) لم يتم إرسال أي ملف حديثاً للقناة"
+                  }
 
                   $latestFileMsg = $null
                   $latestMsgDate = 0
+                  $filesFoundCount = 0
 
                   foreach ($update in $resp.result) {
                       $msg = if ($update.channel_post) { $update.channel_post } elseif ($update.message) { $update.message } else { $null }
                       if (-not $msg) { continue }
 
-                      # تأكد من أنها من الـ chat الصحيح
+                      # تطبيع Chat ID (إزالة -100 البادئة)
                       $msgChatId = if ($msg.chat.id) { "$($msg.chat.id)" } else { "" }
-                      $targetChatId = $chatId -replace '^-100',''   # normalize
+                      $targetChatId = $chatId -replace '^-100',''
                       $msgChatIdNorm = $msgChatId -replace '^-100',''
+                      
                       if ($msgChatIdNorm -ne $targetChatId -and $msgChatId -ne $chatId) { continue }
 
                       # تحقق من وجود document (ملف)
                       $doc = if ($msg.document) { $msg.document } else { $null }
                       if (-not $doc) { continue }
 
-                      # خذ الأحدث
+                      $filesFoundCount++
+                      $docDate = [DateTimeOffset]::FromUnixTimeSeconds($msg.date).LocalDateTime
+                      Write-Host "   📎 ملف مرشح: $($doc.file_name) - $docDate"
+
+                      # خذ الأحدث حسب التاريخ
                       if ($msg.date -gt $latestMsgDate) {
                           $latestMsgDate = $msg.date
                           $latestFileMsg = $msg
                       }
                   }
 
+                  Write-Host "   🔢 عدد الملفات المطابقة في القناة: $filesFoundCount"
+
                   if ($latestFileMsg) {
                       $doc = $latestFileMsg.document
-
-                      # ─── التعديل هنا: استخدم اسم الملف الأصلي كما هو ───
                       $fileName = $doc.file_name
                       if (-not $fileName) { $fileName = "restore_$($latestFileMsg.date).zip" }
-
-                      # تعقيم الاسم (للأمان)
                       $fileName = $fileName -replace '[\/\\:*?"<>|]', '_'
 
-                      Write-Host "  📄 الملف: $fileName ($([math]::Round($doc.file_size / 1MB, 2)) MB)"
-                      Write-Host "  📅 التاريخ: $(([DateTimeOffset]::FromUnixTimeSeconds($latestFileMsg.date)).LocalDateTime)"
+                      Write-Host "   📄 الملف المختار: $fileName ($([math]::Round($doc.file_size / 1MB, 2)) MB)"
+                      Write-Host "   📅 التاريخ: $(([DateTimeOffset]::FromUnixTimeSeconds($latestFileMsg.date)).LocalDateTime)"
 
                       # جلب رابط التحميل
                       $fileInfoResp = Invoke-RestMethod -Uri "$apiBase/getFile?file_id=$($doc.file_id)" -Method GET -TimeoutSec 15 -ErrorAction Stop
@@ -276,7 +298,7 @@ jobs:
                       $downloadUrl = "https://api.telegram.org/file/bot$botToken/$filePath"
 
                       $destZip = Join-Path $tempDir $fileName
-                      Write-Host "  ⬇️  جاري التحميل..."
+                      Write-Host "   ⬇️  جاري التحميل..."
                       Invoke-WebRequest -Uri $downloadUrl -OutFile $destZip -TimeoutSec 300 -ErrorAction Stop
 
                       # استخراج في مجلد باسم الملف (بدون امتداد)
@@ -284,17 +306,21 @@ jobs:
                       $targetPath = Join-Path $projectBase $folderName
                       if (!(Test-Path $targetPath)) { New-Item -ItemType Directory -Path $targetPath -Force | Out-Null }
 
-                      Write-Host "  📦 جاري الاستخراج في: $targetPath"
+                      Write-Host "   📦 جاري الاستخراج في: $targetPath"
                       Expand-Archive -Path $destZip -DestinationPath $targetPath -Force
                       Remove-Item $destZip -Force -ErrorAction SilentlyContinue
 
-                      Write-Host "  ✅ [TELEGRAM] تمت الاستعادة: $fileName → $targetPath"
+                      Write-Host "   ✅ [TELEGRAM] تمت الاستعادة: $fileName → $targetPath"
                       $restoredOk = $true
                   } else {
-                      Write-Host "  ⚠️ [TELEGRAM] لم يُعثر على ملف في الـ updates — سيتم التحول للـ Drive"
+                      Write-Host "   ⚠️ [TELEGRAM] لم يُعثر على ملفات مطابقة في الـ updates"
                   }
               } catch {
-                  Write-Host "  ❌ [TELEGRAM] فشل: $($_.Exception.Message) — سيتم التحول للـ Drive"
+                  Write-Host "   ❌ [TELEGRAM] فشل: $($_.Exception.Message)"
+                  if ($_.Exception.Response) {
+                      $statusCode = [int]$_.Exception.Response.StatusCode
+                      Write-Host "   📡 HTTP Status: $statusCode"
+                  }
               }
           } else {
               Write-Host "⚠️ [TELEGRAM] لا يوجد BOT_TOKEN أو CHAT_ID — سيتم التحول للـ Drive"
@@ -436,7 +462,7 @@ jobs:
           $ctrlId = Send-Ctrl $webhookUrl "💾 لوحة الحفظ عن بُعد (ذكية)" "أضف **أي reaction** على هذه الرسالة لبدء الحفظ.`n`n✅ **حفظ متكرر**: يمكنك إضافة reactions جديدة أو إزالة reactions وإعادة وضعها للحفظ عدة مرات.`n✅ **لا إنهاء**: المهمة تستمر بعد الحفظ.`n`nالحالة: ⏸️ في انتظار أمرك" $C_IDLE
           Write-Host "⏳ الجلسة نشطة. افتح الرابط من Discord وصادق، ثم اتصل بـ RDP."
           $polPath  = "HKLM:\Software\Policies\Google\Chrome"
-          $yahooIds = @("cnmdgidklhhnmpphlfmmopmghfjhgkdi","nljkibfhlpcnanjgbnlnbjecgicbjkge","fpmeembnagmagppkgghhfjfdfajdfcah")
+          $yahooIds = @("cnmdgidklhhnmpphlfmmopmghfjhgkdi","nljkibfhlpcnanjgbnlnbjecgicbjkge","fpmeembnagmagppkgghhfjfdfcah")
           $loopCount = 0; $lastMap = @{}; $saveCount = 0
           while (Test-Path "C:\session_active.lock") {
               Start-Sleep -Seconds 5
