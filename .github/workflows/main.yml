@@ -12,15 +12,23 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set Timezone
+      - name: Verify Node.js
+        shell: pwsh
         run: |
-          tzutil /s "Arabic Standard Time"
-          Write-Host "Timezone set to UTC+3"
-
-      - name: Install Node.js
-        run: |
-          choco install nodejs-lts -y --silent --no-progress
-          echo "C:\Program Files\nodejs" >> $env:GITHUB_PATH
+          try {
+              $nodeVer = (node --version 2>&1).Trim()
+              $npmVer = (npm --version 2>&1).Trim()
+              if ($nodeVer -match '^v\d') {
+                  Write-Host "Node.js already installed: $nodeVer"
+                  Write-Host "npm already installed: $npmVer"
+                  exit 0
+              }
+              throw "Node not responding"
+          } catch {
+              Write-Host "Node.js not found - installing via Chocolatey..."
+              choco install nodejs-lts -y --silent --no-progress
+              echo "C:\Program Files\nodejs" >> $env:GITHUB_PATH
+          }
 
       - name: Setup RDP User
         shell: pwsh
@@ -48,11 +56,19 @@ jobs:
           Restart-Service -Name TermService -Force
           Write-Host "RDP enabled"
 
-      - name: Install Node Packages (telegram + discord.js)
+      - name: Install Tailscale
+        run: |
+          choco install tailscale -y --silent --no-progress
+          $tailscalePath = "C:\Program Files\Tailscale"
+          echo "$tailscalePath" >> $env:GITHUB_PATH
+          Write-Host "Tailscale installed"
+
+      - name: Install Node Packages
         run: |
           cd C:\Users\Public
           npm init -y
           npm install telegram discord.js
+          Write-Host "Node packages installed"
 
       - name: Create Backup Script
         shell: pwsh
@@ -78,7 +94,6 @@ jobs:
           $TempDir = "$env:TEMP\backup_work"
           if (!(Test-Path $OutputDir)) { New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null }
           if (!(Test-Path $TempDir)) { New-Item -ItemType Directory -Path $TempDir -Force | Out-Null }
-
           function Get-FolderPrefix($Name) {
               foreach ($p in $global:Prefixes) { if ($Name -match "^$([regex]::Escape($p))-") { return $p } }
               if ($Name -match $global:DynamicPattern) { return ($Name -split '-')[0] }
@@ -89,7 +104,6 @@ jobs:
               $uid = -join ((65..90 | Where-Object { [char]$_ -notin @('I','O') } | Get-Random -Count 6) | ForEach-Object { [char]$_ })
               return "$prefix-$stamp-$uid.zip"
           }
-
           $searchPaths = @(
               "$env:USERPROFILE\Downloads", "$env:USERPROFILE\Desktop",
               "$env:USERPROFILE\Projects", "$env:USERPROFILE\Documents\Projects",
@@ -97,7 +111,6 @@ jobs:
               "C:\Users\Public\Desktop\Project", "C:\Users\Public\Desktop",
               "C:\Users\Public\Documents", "C:\Projects", "D:\Projects", "D:\", $ProjectDirectory
           ) | Where-Object { Test-Path $_ } | Select-Object -Unique
-
           $prefixPattern = '^(' + (($global:Prefixes | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')-'
           $folders = @()
           foreach ($sp in $searchPaths) {
@@ -106,16 +119,13 @@ jobs:
               if ($found) { $folders += $found }
           }
           $folders = $folders | Sort-Object FullName | Get-Unique -AsString
-
           if ($folders.Count -eq 0) {
               Write-Host "[INFO] No folders to backup"
               @{ Success=$true; Files=@(); Count=0 } | ConvertTo-Json | Out-File "$OutputDir\backup_manifest.json" -Encoding UTF8
               exit 0
           }
-
           Write-Host "[FOLDERS] Found $($folders.Count) folders"
           $results = @()
-
           foreach ($folder in $folders) {
               $prefix = Get-FolderPrefix -Name $folder.Name
               $zipName = Get-UniqueZipName -prefix $prefix
@@ -133,111 +143,17 @@ jobs:
                   Write-Host "  ERROR: $($_.Exception.Message)"
               }
           }
-
           @{ Success=$true; Files=$results; Count=$results.Count } | ConvertTo-Json -Depth 3 | Out-File "$OutputDir\backup_manifest.json" -Encoding UTF8 -Force
           Write-Host "BACKUP COMPLETE: $($results.Count) files"
           '@
           Set-Content -Path "C:\Users\Public\backup.ps1" -Value $script -Encoding UTF8 -Force
           Write-Host "Backup script created"
 
-      - name: Create Telegram Upload Script
-        shell: pwsh
-        run: |
-          $script = @'
-          const { TelegramClient, Api } = require('telegram');
-          const { StringSession } = require('telegram/sessions');
-          const fs = require('fs');
-          const path = require('path');
-
-          const apiId = parseInt(process.env.TELEGRAM_API_ID);
-          const apiHash = process.env.TELEGRAM_API_HASH;
-          const botToken = process.env.TELEGRAM_BOT_TOKEN;
-          const channelId = process.env.TELEGRAM_CHANNEL_ID;
-          const manifestPath = path.join(process.env.TEMP || process.env.TMP || 'C:\\Users\\Public\\AppData\\Local\\Temp', 'backup_output', 'backup_manifest.json');
-
-          if (!apiId || !apiHash || !botToken || !channelId) {
-            console.error('ERROR: Missing required Telegram secrets');
-            process.exit(1);
-          }
-
-          if (!fs.existsSync(manifestPath)) {
-            console.error('ERROR: Manifest not found at:', manifestPath);
-            process.exit(1);
-          }
-
-          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-          if (!manifest.Success || !manifest.Files || manifest.Files.length === 0) {
-            console.log('No files to upload');
-            process.exit(0);
-          }
-
-          console.log('Files to upload:', manifest.Count);
-          manifest.Files.forEach(f => console.log('  ' + f.Name + ' - ' + Math.round(f.Size / 1048576) + ' MB'));
-
-          let uploadDone = false;
-
-          (async () => {
-            const client = new TelegramClient(new StringSession(''), apiId, apiHash, { connectionRetries: 5 });
-            await client.start({ botAuthToken: botToken });
-            console.log('Connected to Telegram as bot');
-
-            let entity = null;
-            if (channelId.startsWith('@')) {
-              entity = channelId;
-            } else {
-              const cleanId = parseInt(channelId.replace(/^-100/, ''));
-              try {
-                const result = await client.invoke(new Api.channels.GetChannels({
-                  id: [new Api.InputChannel({ channelId: BigInt(cleanId), accessHash: BigInt(0) })]
-                }));
-                if (result.chats && result.chats.length > 0) { entity = result.chats[0]; }
-              } catch (err) {
-                entity = new Api.InputPeerChannel({ channelId: BigInt(cleanId), accessHash: BigInt(0) });
-              }
-            }
-
-            if (!entity) { console.error('Could not resolve channel'); process.exit(1); }
-
-            let success = 0, failed = 0;
-            for (const file of manifest.Files) {
-              if (!fs.existsSync(file.Path)) { console.error('File missing:', file.Path); failed++; continue; }
-              try {
-                const ts = new Date().toISOString().replace(/[:.]/g, '-');
-                const caption = [
-                  'Backup: ' + file.Folder,
-                  'File: ' + file.Name,
-                  'Size: ' + Math.round(file.Size / 1048576) + ' MB',
-                  'Date: ' + ts,
-                  '',
-                  'Source: RDP_ULTRA_STATION',
-                  'Status: Success'
-                ].join('\n');
-                await client.sendFile(entity, { file: file.Path, caption: caption, forceDocument: true, fileName: file.Name, workers: 4 });
-                console.log('Uploaded:', file.Name);
-                success++;
-                try { fs.unlinkSync(file.Path); } catch (_) {}
-              } catch (err) { console.error('Failed:', file.Name, err.errorMessage || err.message); failed++; }
-            }
-
-            uploadDone = true;
-            console.log('UPLOAD SUMMARY: ' + success + ' success, ' + failed + ' failed');
-            setTimeout(async () => { try { await client.disconnect(); } catch (_) {} process.exit(failed > 0 ? 1 : 0); }, 3000);
-          })().catch(err => {
-            const msg = err.errorMessage || err.message || String(err);
-            if (uploadDone || msg === 'TIMEOUT') { process.exit(0); }
-            console.error('Telegram error:', msg);
-            process.exit(1);
-          });
-          '@
-          Set-Content -Path "C:\Users\Public\upload.js" -Value $script -Encoding UTF8 -Force
-          Write-Host "Upload script created"
-
-      - name: Create Discord Bot Script
+      - name: Create Discord Bot Script (Direct Upload Embedded)
         shell: pwsh
         run: |
           $botDir = "C:\Users\Public\bot"
           if (!(Test-Path $botDir)) { New-Item -ItemType Directory -Path $botDir -Force | Out-Null }
-
           $packageJson = @'
           {
             "name": "rdp-backup-bot",
@@ -251,34 +167,78 @@ jobs:
           }
           '@
           Set-Content -Path "$botDir\package.json" -Value $packageJson -Encoding UTF8 -Force
-
           $botScript = @'
           const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
           const { execSync, spawn } = require('child_process');
           const fs = require('fs');
           const path = require('path');
-
           const BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
           const CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
           const LOCK_FILE = 'C:\\session_active.lock';
           const BACKUP_SCRIPT = 'C:\\Users\\Public\\backup.ps1';
-          const UPLOAD_SCRIPT = 'C:\\Users\\Public\\upload.js';
-
+          const UPLOAD_INLINE_PATH = 'C:\\Users\\Public\\bot\\_inline_upload.js';
+          const UPLOAD_CODE = [
+            "const { TelegramClient, Api } = require('telegram');",
+            "const { StringSession } = require('telegram/sessions');",
+            "const fs = require('fs');",
+            "const path = require('path');",
+            "const apiId = parseInt(process.env.TELEGRAM_API_ID);",
+            "const apiHash = process.env.TELEGRAM_API_HASH;",
+            "const botToken = process.env.TELEGRAM_BOT_TOKEN;",
+            "const channelId = process.env.TELEGRAM_CHANNEL_ID;",
+            "const manifestPath = path.join(process.env.TEMP || process.env.TMP, 'backup_output', 'backup_manifest.json');",
+            "if (!apiId || !apiHash || !botToken || !channelId) { console.error('Missing secrets'); process.exit(1); }",
+            "if (!fs.existsSync(manifestPath)) { console.error('Manifest not found'); process.exit(1); }",
+            "const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));",
+            "if (!manifest.Success || !manifest.Files || manifest.Files.length === 0) { console.log('No files'); process.exit(0); }",
+            "console.log('Files to upload:', manifest.Count);",
+            "let uploadDone = false;",
+            "(async () => {",
+            "  const client = new TelegramClient(new StringSession(''), apiId, apiHash, { connectionRetries: 5 });",
+            "  await client.start({ botAuthToken: botToken });",
+            "  console.log('Connected to Telegram');",
+            "  let entity = null;",
+            "  if (channelId.startsWith('@')) { entity = channelId; }",
+            "  else {",
+            "    const cleanId = parseInt(channelId.replace(/^-100/, ''));",
+            "    try {",
+            "      const result = await client.invoke(new Api.channels.GetChannels({ id: [new Api.InputChannel({ channelId: BigInt(cleanId), accessHash: BigInt(0) })] }));",
+            "      if (result.chats && result.chats.length > 0) { entity = result.chats[0]; }",
+            "    } catch (err) { entity = new Api.InputPeerChannel({ channelId: BigInt(cleanId), accessHash: BigInt(0) }); }",
+            "  }",
+            "  if (!entity) { console.error('Could not resolve channel'); process.exit(1); }",
+            "  let success = 0, failed = 0;",
+            "  for (const file of manifest.Files) {",
+            "    if (!fs.existsSync(file.Path)) { failed++; continue; }",
+            "    try {",
+            "      const ts = new Date().toISOString().replace(/[:.]/g, '-');",
+            "      const caption = 'Backup: ' + file.Folder + '\\nFile: ' + file.Name + '\\nSize: ' + Math.round(file.Size / 1048576) + ' MB\\nDate: ' + ts + '\\nSource: RDP_ULTRA_STATION';",
+            "      await client.sendFile(entity, { file: file.Path, caption: caption, forceDocument: true, fileName: file.Name, workers: 4 });",
+            "      console.log('Uploaded:', file.Name);",
+            "      success++;",
+            "      try { fs.unlinkSync(file.Path); } catch (_) {}",
+            "    } catch (err) { console.error('Failed:', file.Name); failed++; }",
+            "  }",
+            "  uploadDone = true;",
+            "  console.log('RESULT: ' + success + ' ok, ' + failed + ' failed');",
+            "  setTimeout(async () => { try { await client.disconnect(); } catch (_) {} process.exit(failed > 0 ? 1 : 0); }, 3000);",
+            "})().catch(err => {",
+            "  const msg = err.errorMessage || err.message || String(err);",
+            "  if (uploadDone || msg === 'TIMEOUT') { process.exit(0); }",
+            "  console.error('Telegram error:', msg);",
+            "  process.exit(1);",
+            "});"
+          ].join('\n');
           if (!BOT_TOKEN || !CHANNEL_ID) {
             console.error('FATAL: DISCORD_BOT_TOKEN or DISCORD_CHANNEL_ID missing');
             process.exit(1);
           }
-
-          // ═══════════════════════════════════════════
-          // STATE MACHINE
-          // ═══════════════════════════════════════════
-          let state = 'IDLE'; // IDLE | COMPRESSING | UPLOADING | CANCELLING
+          let state = 'IDLE';
           let currentProc = null;
           let currentPhase = 'IDLE';
           let saveCount = 0;
           let lastResult = 'None';
           let controlMessage = null;
-
           const client = new Client({
             intents: [
               GatewayIntentBits.Guilds,
@@ -286,15 +246,10 @@ jobs:
               GatewayIntentBits.MessageContent
             ]
           });
-
-          // ═══════════════════════════════════════════
-          // EMBED + BUTTONS BUILDER
-          // ═══════════════════════════════════════════
           function buildEmbed() {
             const stateEmoji = { IDLE: '⏸️', COMPRESSING: '🗜️', UPLOADING: '☁️', CANCELLING: '🛑' };
             const stateLabel = { IDLE: 'Idle', COMPRESSING: 'Compressing...', UPLOADING: 'Uploading to Telegram...', CANCELLING: 'Cancelling...' };
             const colors = { IDLE: 0x99AAB5, COMPRESSING: 0xFFA500, UPLOADING: 0x3498DB, CANCELLING: 0xE74C3C };
-
             const embed = new EmbedBuilder()
               .setTitle('🖥️ RDP Backup Control')
               .setColor(colors[state] || 0x99AAB5)
@@ -307,7 +262,6 @@ jobs:
               .setTimestamp();
             return embed;
           }
-
           function buildButtons() {
             const row = new ActionRowBuilder().addComponents(
               new ButtonBuilder()
@@ -331,29 +285,23 @@ jobs:
             );
             return [row];
           }
-
           async function updatePanel() {
             if (!controlMessage) return;
             try {
               await controlMessage.edit({ embeds: [buildEmbed()], components: buildButtons() });
             } catch (_) {}
           }
-
-          // ═══════════════════════════════════════════
-          // KILL SWITCH — kills entire process tree
-          // ═══════════════════════════════════════════
           function killProcessTree(pid) {
             try {
               execSync('taskkill /PID ' + pid + ' /T /F', { stdio: 'ignore' });
               console.log('Killed process tree PID:', pid);
             } catch (e) {
-              console.log('taskkill failed (may already be dead):', e.message);
+              console.log('taskkill failed:', e.message);
             }
           }
-
           function cleanupTempFiles() {
             try {
-              const tempDir = process.env.TEMP || process.env.TMP || 'C:\\Users\\Public\\AppData\\Local\\Temp';
+              const tempDir = process.env.TEMP || process.env.TMP;
               const outputDir = path.join(tempDir, 'backup_output');
               const workDir = path.join(tempDir, 'backup_work');
               if (fs.existsSync(outputDir)) {
@@ -366,7 +314,6 @@ jobs:
               }
             } catch (_) {}
           }
-
           async function killAll() {
             if (state === 'IDLE') {
               lastResult = 'No operation running';
@@ -374,55 +321,34 @@ jobs:
               return;
             }
             if (state === 'CANCELLING') return;
-
             state = 'CANCELLING';
             await updatePanel();
-            console.log('KILL ALL triggered — phase was:', currentPhase);
-
             if (currentProc && currentProc.pid) {
               killProcessTree(currentProc.pid);
             }
-
-            // Safety: kill any orphaned robocopy or Compress-Archive child
             try { execSync('taskkill /IM robocopy.exe /F', { stdio: 'ignore' }); } catch (_) {}
-
             cleanupTempFiles();
-
             currentProc = null;
             currentPhase = 'IDLE';
             state = 'IDLE';
             lastResult = '🛑 Cancelled by user';
             await updatePanel();
-            console.log('Kill complete — back to IDLE');
           }
-
-          // ═══════════════════════════════════════════
-          // BACKUP ENGINE
-          // ═══════════════════════════════════════════
           function runBackup() {
             if (state !== 'IDLE') {
-              console.log('Backup ignored — state is', state);
+              console.log('Backup ignored - state is', state);
               return;
             }
-
             state = 'COMPRESSING';
             currentPhase = 'Compressing';
             updatePanel();
-            console.log('Backup started — compressing...');
-
             const backupProc = spawn('pwsh', ['-ExecutionPolicy', 'Bypass', '-File', BACKUP_SCRIPT], {
               stdio: 'pipe',
               windowsHide: true
             });
             currentProc = backupProc;
-
-            let backupOutput = '';
-            backupProc.stdout.on('data', d => { backupOutput += d.toString(); });
-            backupProc.stderr.on('data', d => { backupOutput += d.toString(); });
-
             const backupTimeout = setTimeout(() => {
               if (currentProc === backupProc && state === 'COMPRESSING') {
-                console.log('Backup timeout — killing');
                 killProcessTree(backupProc.pid);
                 state = 'IDLE';
                 currentPhase = 'IDLE';
@@ -431,7 +357,6 @@ jobs:
                 updatePanel();
               }
             }, 600000);
-
             backupProc.on('close', (code) => {
               clearTimeout(backupTimeout);
               if (state === 'CANCELLING') return;
@@ -441,29 +366,24 @@ jobs:
                 currentProc = null;
                 lastResult = '❌ Backup failed (exit ' + code + ')';
                 updatePanel();
-                console.log('Backup failed with code', code);
                 return;
               }
-
-              console.log('Backup done — starting upload...');
               state = 'UPLOADING';
               currentPhase = 'Uploading to Telegram';
               updatePanel();
-
-              const uploadProc = spawn('node', [UPLOAD_SCRIPT], {
+              try { fs.writeFileSync(UPLOAD_INLINE_PATH, UPLOAD_CODE, 'utf8'); } catch (e) {
+                state = 'IDLE'; currentPhase = 'IDLE'; currentProc = null;
+                lastResult = '❌ Failed to write upload script'; updatePanel(); return;
+              }
+              const uploadProc = spawn('node', [UPLOAD_INLINE_PATH], {
                 stdio: 'pipe',
                 windowsHide: true,
+                cwd: 'C:\\Users\\Public',
                 env: { ...process.env }
               });
               currentProc = uploadProc;
-
-              let uploadOutput = '';
-              uploadProc.stdout.on('data', d => { uploadOutput += d.toString(); });
-              uploadProc.stderr.on('data', d => { uploadOutput += d.toString(); });
-
               const uploadTimeout = setTimeout(() => {
                 if (currentProc === uploadProc && state === 'UPLOADING') {
-                  console.log('Upload timeout — killing');
                   killProcessTree(uploadProc.pid);
                   state = 'IDLE';
                   currentPhase = 'IDLE';
@@ -472,25 +392,21 @@ jobs:
                   updatePanel();
                 }
               }, 900000);
-
               uploadProc.on('close', (uCode) => {
                 clearTimeout(uploadTimeout);
                 if (state === 'CANCELLING') return;
                 currentProc = null;
                 currentPhase = 'IDLE';
+                try { fs.unlinkSync(UPLOAD_INLINE_PATH); } catch (_) {}
                 if (uCode === 0) {
                   saveCount++;
                   lastResult = '✅ Backup #' + saveCount + ' complete';
-                  state = 'IDLE';
-                  console.log('Upload success');
                 } else {
                   lastResult = '❌ Upload failed (exit ' + uCode + ')';
-                  state = 'IDLE';
-                  console.log('Upload failed with code', uCode);
                 }
+                state = 'IDLE';
                 updatePanel();
               });
-
               uploadProc.on('error', (err) => {
                 clearTimeout(uploadTimeout);
                 if (state === 'CANCELLING') return;
@@ -501,7 +417,6 @@ jobs:
                 updatePanel();
               });
             });
-
             backupProc.on('error', (err) => {
               clearTimeout(backupTimeout);
               if (state === 'CANCELLING') return;
@@ -512,27 +427,20 @@ jobs:
               updatePanel();
             });
           }
-
-          // ═══════════════════════════════════════════
-          // DISCORD EVENTS
-          // ═══════════════════════════════════════════
           client.once('ready', async () => {
             console.log('Bot online as:', client.user.tag);
             try {
               const channel = await client.channels.fetch(CHANNEL_ID);
               if (!channel) { console.error('Channel not found:', CHANNEL_ID); process.exit(1); }
               controlMessage = await channel.send({ embeds: [buildEmbed()], components: buildButtons() });
-              console.log('Control panel sent to channel');
+              console.log('Control panel sent');
             } catch (err) {
               console.error('Failed to send control panel:', err.message);
             }
           });
-
-          // Button interactions
           client.on('interactionCreate', async (interaction) => {
             if (!interaction.isButton()) return;
             try { await interaction.deferUpdate(); } catch (_) {}
-
             switch (interaction.customId) {
               case 'btn_save':
                 runBackup();
@@ -550,26 +458,20 @@ jobs:
                 break;
             }
           });
-
-          // Text commands
           client.on('messageCreate', async (msg) => {
             if (msg.author.bot) return;
             if (msg.channelId !== CHANNEL_ID) return;
-
             const content = msg.content.trim().toLowerCase();
-
             if (content === '!' || content === '!c' || content === '!cancel') {
               await killAll();
               try { await msg.react('🛑'); } catch (_) {}
               return;
             }
-
             if (content === '!save' || content === '!start') {
               runBackup();
               try { await msg.react('💾'); } catch (_) {}
               return;
             }
-
             if (content === '!status') {
               try {
                 await msg.reply({
@@ -580,52 +482,35 @@ jobs:
               return;
             }
           });
-
-          // ═══════════════════════════════════════════
-          // ERROR HANDLING + GRACEFUL SHUTDOWN
-          // ═══════════════════════════════════════════
           process.on('unhandledRejection', (err) => {
             console.error('Unhandled rejection:', err.message || err);
           });
-
           process.on('SIGTERM', () => {
-            console.log('SIGTERM received — shutting down');
             if (currentProc && currentProc.pid) killProcessTree(currentProc.pid);
             client.destroy();
             process.exit(0);
           });
-
           process.on('SIGINT', () => {
-            console.log('SIGINT received — shutting down');
             if (currentProc && currentProc.pid) killProcessTree(currentProc.pid);
             client.destroy();
             process.exit(0);
           });
-
-          // ═══════════════════════════════════════════
-          // SESSION WATCHDOG — exit when lock removed
-          // ═══════════════════════════════════════════
           setInterval(() => {
             if (!fs.existsSync(LOCK_FILE)) {
-              console.log('Session lock removed — bot shutting down');
               if (currentProc && currentProc.pid) killProcessTree(currentProc.pid);
               client.destroy();
               process.exit(0);
             }
           }, 5000);
-
-          // ═══════════════════════════════════════════
-          // START
-          // ═══════════════════════════════════════════
           client.login(BOT_TOKEN).catch(err => {
             console.error('Login failed:', err.message);
             process.exit(1);
           });
           '@
           Set-Content -Path "$botDir\index.js" -Value $botScript -Encoding UTF8 -Force
-          Write-Host "Discord bot script created"
+          Write-Host "Discord bot script created (direct upload embedded)"
 
-      - name: Fetch Launcher from Secret
+      - name: Fetch Launcher
         shell: pwsh
         run: |
           $launcherUrl = "${{ secrets.LAUNCHER_RAW_URL }}"
@@ -646,7 +531,7 @@ jobs:
         run: |
           New-Item -Path "C:\session_active.lock" -ItemType File -Force | Out-Null
 
-      - name: Start Discord Bot + Wait for Session End
+      - name: All-in-One Session (Tailscale + Discord Bot + Wait)
         shell: pwsh
         env:
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
@@ -657,35 +542,44 @@ jobs:
           DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
         run: |
           $botDir = "C:\Users\Public\bot"
+          $logDir = "C:\logs"
+          if (!(Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
+          $tsExe = "C:\Program Files\Tailscale\tailscale.exe"
+          if (!(Test-Path $tsExe)) { $tsExe = (Get-Command tailscale -ErrorAction SilentlyContinue).Source }
+          if ($tsExe) {
+              Write-Host "Starting Tailscale..."
+              Start-Process -FilePath $tsExe -ArgumentList @("up","--hostname=RDP-STATION") -WindowStyle Hidden -PassThru | Out-Null
+              Start-Sleep -Seconds 5
+              Write-Host "Tailscale started"
+          } else {
+              Write-Host "WARNING: Tailscale not found, skipping"
+          }
           Write-Host "Starting Discord bot..."
-          $botProc = Start-Process -FilePath "node" -ArgumentList "$botDir\index.js" -WorkingDirectory $botDir -NoNewWindow -PassThru
+          $botProc = Start-Process -FilePath "node" -ArgumentList "$botDir\index.js" -WorkingDirectory $botDir -WindowStyle Hidden -PassThru -RedirectStandardOutput "$logDir\bot.out.log" -RedirectStandardError "$logDir\bot.err.log"
           Write-Host "Bot PID: $($botProc.Id)"
           Start-Sleep -Seconds 10
-
           if ($botProc.HasExited) {
               Write-Host "WARNING: Bot exited early with code $($botProc.ExitCode)"
-              Write-Host "Running without Discord control — waiting for session end"
               while (Test-Path "C:\session_active.lock") { Start-Sleep -Seconds 30 }
           } else {
               Write-Host "Bot is running. Waiting for session to end..."
               while (Test-Path "C:\session_active.lock") {
                   Start-Sleep -Seconds 5
                   if ($botProc.HasExited) {
-                      Write-Host "Bot died — restarting..."
-                      $botProc = Start-Process -FilePath "node" -ArgumentList "$botDir\index.js" -WorkingDirectory $botDir -NoNewWindow -PassThru
+                      Write-Host "Bot died - restarting..."
+                      $botProc = Start-Process -FilePath "node" -ArgumentList "$botDir\index.js" -WorkingDirectory $botDir -WindowStyle Hidden -PassThru -RedirectStandardOutput "$logDir\bot.out.log" -RedirectStandardError "$logDir\bot.err.log"
                       Write-Host "Bot restarted PID: $($botProc.Id)"
                   }
               }
           }
-
-          Write-Host "Session ended — stopping bot..."
+          Write-Host "Session ended - stopping bot..."
           if (-not $botProc.HasExited) {
               try { taskkill /PID $($botProc.Id) /T /F 2>$null } catch {}
           }
           if (Test-Path "C:\session_active.lock") { Remove-Item "C:\session_active.lock" -Force }
           Write-Host "Bot stopped"
 
-      - name: Final Forced Backup
+      - name: Final Forced Backup (Direct Inline Upload)
         if: always()
         continue-on-error: true
         timeout-minutes: 28
@@ -696,26 +590,75 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
         run: |
-          $lockFile = "C:\session_active.lock"
           $tempDir = $env:TEMP
           $manifestPath = Join-Path $tempDir "backup_output\backup_manifest.json"
-
           Write-Host "=== FINAL FORCED BACKUP ==="
-
-          # Clean any leftover temp files
           $workDir = Join-Path $tempDir "backup_work"
           if (Test-Path $workDir) { Remove-Item $workDir -Recurse -Force -ErrorAction SilentlyContinue }
-
           Write-Host "Running backup.ps1..."
           $bp = Start-Process -FilePath "pwsh" -ArgumentList "-ExecutionPolicy Bypass -File C:\Users\Public\backup.ps1" -NoNewWindow -PassThru -Wait
           Write-Host "Backup exit code: $($bp.ExitCode)"
-
           if (Test-Path $manifestPath) {
               $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
               if ($manifest.Count -gt 0) {
-                  Write-Host "Uploading $($manifest.Count) files to Telegram..."
-                  $up = Start-Process -FilePath "node" -ArgumentList "C:\Users\Public\upload.js" -NoNewWindow -PassThru -Wait
+                  Write-Host "Uploading $($manifest.Count) files to Telegram (DIRECT INLINE)..."
+                  $uploadCode = @'
+          const { TelegramClient, Api } = require('telegram');
+          const { StringSession } = require('telegram/sessions');
+          const fs = require('fs');
+          const path = require('path');
+          const apiId = parseInt(process.env.TELEGRAM_API_ID);
+          const apiHash = process.env.TELEGRAM_API_HASH;
+          const botToken = process.env.TELEGRAM_BOT_TOKEN;
+          const channelId = process.env.TELEGRAM_CHANNEL_ID;
+          const manifestPath = path.join(process.env.TEMP || process.env.TMP, 'backup_output', 'backup_manifest.json');
+          if (!apiId || !apiHash || !botToken || !channelId) { console.error('Missing secrets'); process.exit(1); }
+          if (!fs.existsSync(manifestPath)) { console.error('Manifest not found'); process.exit(1); }
+          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+          if (!manifest.Success || !manifest.Files || manifest.Files.length === 0) { console.log('No files'); process.exit(0); }
+          console.log('Files to upload:', manifest.Count);
+          let uploadDone = false;
+          (async () => {
+            const client = new TelegramClient(new StringSession(''), apiId, apiHash, { connectionRetries: 5 });
+            await client.start({ botAuthToken: botToken });
+            console.log('Connected to Telegram');
+            let entity = null;
+            if (channelId.startsWith('@')) { entity = channelId; }
+            else {
+              const cleanId = parseInt(channelId.replace(/^-100/, ''));
+              try {
+                const result = await client.invoke(new Api.channels.GetChannels({ id: [new Api.InputChannel({ channelId: BigInt(cleanId), accessHash: BigInt(0) })] }));
+                if (result.chats && result.chats.length > 0) { entity = result.chats[0]; }
+              } catch (err) { entity = new Api.InputPeerChannel({ channelId: BigInt(cleanId), accessHash: BigInt(0) }); }
+            }
+            if (!entity) { console.error('Could not resolve channel'); process.exit(1); }
+            let success = 0, failed = 0;
+            for (const file of manifest.Files) {
+              if (!fs.existsSync(file.Path)) { failed++; continue; }
+              try {
+                const ts = new Date().toISOString().replace(/[:.]/g, '-');
+                const caption = 'Backup: ' + file.Folder + '\nFile: ' + file.Name + '\nSize: ' + Math.round(file.Size / 1048576) + ' MB\nDate: ' + ts + '\nSource: RDP_FINAL_FORCED';
+                await client.sendFile(entity, { file: file.Path, caption: caption, forceDocument: true, fileName: file.Name, workers: 4 });
+                console.log('Uploaded:', file.Name);
+                success++;
+                try { fs.unlinkSync(file.Path); } catch (_) {}
+              } catch (err) { console.error('Failed:', file.Name); failed++; }
+            }
+            uploadDone = true;
+            console.log('RESULT: ' + success + ' ok, ' + failed + ' failed');
+            setTimeout(async () => { try { await client.disconnect(); } catch (_) {} process.exit(failed > 0 ? 1 : 0); }, 3000);
+          })().catch(err => {
+            const msg = err.errorMessage || err.message || String(err);
+            if (uploadDone || msg === 'TIMEOUT') { process.exit(0); }
+            console.error('Telegram error:', msg);
+            process.exit(1);
+          });
+                  '@
+                  $tempJs = "C:\Users\Public\final_inline_upload.js"
+                  Set-Content -Path $tempJs -Value $uploadCode -Encoding UTF8 -Force
+                  $up = Start-Process -FilePath "node" -ArgumentList $tempJs -WorkingDirectory "C:\Users\Public" -NoNewWindow -PassThru -Wait
                   Write-Host "Upload exit code: $($up.ExitCode)"
+                  Remove-Item $tempJs -Force -ErrorAction SilentlyContinue
                   if ($up.ExitCode -eq 0) {
                       Write-Host "FINAL BACKUP: SUCCESS"
                   } else {
@@ -727,6 +670,5 @@ jobs:
           } else {
               Write-Host "FINAL BACKUP: No manifest found"
           }
-
-          if (Test-Path $lockFile) { Remove-Item $lockFile -Force -ErrorAction SilentlyContinue }
+          if (Test-Path "C:\session_active.lock") { Remove-Item "C:\session_active.lock" -Force -ErrorAction SilentlyContinue }
           Write-Host "=== WORKFLOW COMPLETE ==="
