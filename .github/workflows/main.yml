@@ -1,4 +1,4 @@
-name: RDP_ULTRA_STATION_FINAL_V26
+name: RDP_ULTRA_STATION_TELEGRAM
 
 on:
   workflow_dispatch:
@@ -12,147 +12,23 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set Timezone to Saudi Arabia (UTC+3)
+      - name: Set Timezone
         run: |
           tzutil /s "Arabic Standard Time"
-          Write-Host "✅ تم ضبط التوقيت إلى: $(Get-TimeZone -Id 'Arabic Standard Time').DisplayName"
+          Write-Host "Timezone set to UTC+3"
 
-      - name: Install Tools (Pre-requisites)
+      - name: Install Node.js
         run: |
-          choco install rclone tailscale -y --silent --no-progress
-          $tailscalePath = "C:\Program Files\Tailscale"
-          $rclonePath = "C:\Program Files\rclone"
-          echo "$tailscalePath" >> $env:GITHUB_PATH
-          echo "$rclonePath" >> $env:GITHUB_PATH
+          choco install nodejs-lts -y --silent --no-progress
+          echo "C:\Program Files\nodejs" >> $env:GITHUB_PATH
 
-      - name: Set Chrome as Official Default Browser
+      - name: Setup RDP User
         shell: pwsh
         run: |
-          $xmlPath = "C:\defaultapps.xml"
-          $chromePath = "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe"
-          if (!(Test-Path $chromePath)) { $chromePath = "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe" }
-          try {
-              if (!(Test-Path $chromePath)) { throw "Chrome غير مثبت" }
-              $xmlContent = @"
-          <?xml version="1.0" encoding="UTF-8"?>
-          <DefaultAssociations>
-            <Association Identifier=".htm" ProgId="ChromeHTML" ApplicationName="Google Chrome" />
-            <Association Identifier=".html" ProgId="ChromeHTML" ApplicationName="Google Chrome" />
-            <Association Identifier="http" ProgId="ChromeHTML" ApplicationName="Google Chrome" />
-            <Association Identifier="https" ProgId="ChromeHTML" ApplicationName="Google Chrome" />
-          </DefaultAssociations>
-          "@
-              $xmlContent | Set-Content -Path $xmlPath -Encoding UTF8 -Force
-              Start-Process dism.exe -ArgumentList "/Online /Import-DefaultAppAssociations:$xmlPath" -Wait -NoNewWindow
-          } catch {}
-          if (Test-Path $xmlPath) { Remove-Item $xmlPath -Force }
-
-      - name: Force Google & Destroy Yahoo (All Layers)
-        shell: pwsh
-        run: |
-          Get-Process chrome -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 2
-          $pol = "HKLM:\Software\Policies\Google\Chrome"
-          if (!(Test-Path $pol)) { New-Item -Path $pol -Force | Out-Null }
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEnabled"    -Value 1        -Type DWord  -Force
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderName"       -Value "Google" -Type String -Force
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderKeyword"    -Value "google.com" -Type String -Force
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL"  -Value "https://www.google.com/search?q={searchTerms}" -Type String -Force
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSuggestURL" -Value "https://www.google.com/complete/search?client=chrome&q={searchTerms}" -Type String -Force
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderIconURL"    -Value "https://www.google.com/favicon.ico" -Type String -Force
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderNewTabURL"  -Value "https://www.google.com" -Type String -Force
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEncodings"  -Value "UTF-8"  -Type String -Force
-          Set-ItemProperty -Path $pol -Name "PasswordManagerEnabled"    -Value 1 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "BrowserSignin"             -Value 1 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "AutofillAddressEnabled"    -Value 1 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "AutofillCreditCardEnabled" -Value 1 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "DeveloperToolsAvailability"  -Value 1 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "PromotionalTabsEnabled"       -Value 0 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "WelcomePageOnOSUpgradeEnabled"-Value 0 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "BackgroundModeEnabled"        -Value 0 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "StartupBoostEnabled"          -Value 0 -Type DWord -Force
-          Write-Host "✅ الطبقة 1: سياسات Chrome + Sync/كلمات المرور"
-          $blockPath = "$pol\ExtensionInstallBlocklist"
-          if (!(Test-Path $blockPath)) { New-Item -Path $blockPath -Force | Out-Null }
-          Set-ItemProperty -Path $blockPath -Name "1" -Value "*" -Type String -Force
-          $typeBlock = "$pol\ExtensionInstallTypeBlocklist"
-          if (!(Test-Path $typeBlock)) { New-Item -Path $typeBlock -Force | Out-Null }
-          Set-ItemProperty -Path $typeBlock -Name "1" -Value "development" -Type String -Force
-          Set-ItemProperty -Path $typeBlock -Name "2" -Value "sideload"    -Type String -Force
-          Write-Host "✅ الطبقة 2: حظر جميع الإضافات + التثبيت الخارجي"
-          $yahooIds = @("cnmdgidklhhnmpphlfmmopmghfjhgkdi","nljkibfhlpcnanjgbnlnbjecgicbjkge","fpmeembnagmagppkgghhfjfdfcah")
-          Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-              $extDir = Join-Path $_.FullName "AppData\Local\Google\Chrome\User Data\Default\Extensions"
-              if (Test-Path $extDir) {
-                  foreach ($yid in $yahooIds) {
-                      $p = Join-Path $extDir $yid
-                      if (Test-Path $p) { Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "  🗑️ extension $yid ($($_.Name))" }
-                  }
-              }
-          }
-          $uninstallKeys = @("HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*","HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*")
-          foreach ($key in $uninstallKeys) {
-              Get-ItemProperty $key -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like "*Yahoo*" } | ForEach-Object {
-                  if ($_.UninstallString) {
-                      $cmd = $_.UninstallString -replace '/I','/X'
-                      Start-Process cmd -ArgumentList "/c `"$cmd`" /S /quiet /norestart" -Wait -NoNewWindow -ErrorAction SilentlyContinue
-                  }
-              }
-          }
-          @("HKLM:\SOFTWARE\Yahoo","HKCU:\SOFTWARE\Yahoo","HKLM:\SOFTWARE\WOW6432Node\Yahoo") | ForEach-Object {
-              if (Test-Path $_) { Remove-Item $_ -Recurse -Force -ErrorAction SilentlyContinue }
-          }
-          Write-Host "✅ الطبقة 3: حذف Yahoo"
-          Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-              $profileDir = Join-Path $_.FullName "AppData\Local\Google\Chrome\User Data\Default"
-              if (Test-Path $profileDir) {
-                  @("Preferences","Secure Preferences") | ForEach-Object {
-                      $fp = Join-Path $profileDir $_
-                      if (Test-Path $fp) { Remove-Item $fp -Force -ErrorAction SilentlyContinue }
-                  }
-              }
-              $userData = Join-Path $_.FullName "AppData\Local\Google\Chrome\User Data"
-              if (!(Test-Path $userData)) { New-Item -Path $userData -ItemType Directory -Force | Out-Null }
-              "" | Set-Content (Join-Path $userData "First Run") -Force
-          }
-          Write-Host "✅ الطبقة 4: حذف Preferences + First Run"
-          try {
-              $regKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey("Software\Policies\Google\Chrome",[Microsoft.Win32.RegistryKeyPermissionCheck]::ReadWriteSubTree,[System.Security.AccessControl.RegistryRights]::ChangePermissions)
-              $acl = $regKey.GetAccessControl()
-              $usersRule = New-Object System.Security.AccessControl.RegistryAccessRule("BUILTIN\Users","ReadKey","ContainerInherit,ObjectInherit","None","Allow")
-              $acl.AddAccessRule($usersRule)
-              $regKey.SetAccessControl($acl); $regKey.Close()
-              Write-Host "✅ الطبقة 5: حماية Registry بـ ACLs"
-          } catch { Write-Host "⚠️ تعذر ضبط ACLs: $_" }
-          $watchdogContent = @'
-          $pol = "HKLM:\Software\Policies\Google\Chrome"
-          $cur = Get-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL" -ErrorAction SilentlyContinue
-          if ($cur.DefaultSearchProviderSearchURL -notlike "*google.com*") {
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEnabled"    -Value 1        -Type DWord  -Force
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderName"       -Value "Google" -Type String -Force
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderKeyword"    -Value "google.com" -Type String -Force
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL"  -Value "https://www.google.com/search?q={searchTerms}" -Type String -Force
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSuggestURL" -Value "https://www.google.com/complete/search?client=chrome&q={searchTerms}" -Type String -Force
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderIconURL"    -Value "https://www.google.com/favicon.ico" -Type String -Force
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderNewTabURL"  -Value "https://www.google.com" -Type String -Force
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEncodings"  -Value "UTF-8"  -Type String -Force
-          }
-          '@
-          Set-Content -Path "C:\Users\Public\search_watchdog.ps1" -Value $watchdogContent -Encoding UTF8
-          try {
-              $pwshPath = "C:\Program Files\PowerShell\7\pwsh.exe"
-              $action   = New-ScheduledTaskAction -Execute $pwshPath -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File C:\Users\Public\search_watchdog.ps1"
-              $trigger  = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(5) -RepetitionInterval 00:00:30 -RepetitionDuration 06:00:00
-              $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
-              Register-ScheduledTask -TaskName "GoogleSearchWatchdog" -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -User "SYSTEM" -Force | Out-Null
-              Write-Host "✅ الطبقة 6: Watchdog مُسجّل (كل 30 ثانية كـ SYSTEM)"
-          } catch { Write-Host "⚠️ تعذر تسجيل Watchdog: $_" }
-          Write-Host "🛡️ اكتمل الدفاع متعدد الطبقات — Google مُجبر + كلمات المرور مفعّلة"
-
-      - name: Setup Environment & User
-        run: |
-          $password = "admin@123"
-          $username = "TOOLBOXLAP"
+          $password = "${{ secrets.RDP_PASSWORD }}"
+          $username = "${{ secrets.RDP_USERNAME }}"
+          if ([string]::IsNullOrEmpty($password)) { $password = "admin@123" }
+          if ([string]::IsNullOrEmpty($username)) { $username = "TOOLBOXLAP" }
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
           if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
               New-LocalUser -Name $username -Password $securePass -AccountNeverExpires | Out-Null
@@ -163,254 +39,694 @@ jobs:
           foreach ($dir in $dirs) {
             if (!(Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
           }
+          Write-Host "RDP user configured"
 
-      - name: Setup SSH Key from GitHub Secrets
-        shell: pwsh
-        run: |
-          $sshDir = Join-Path $env:USERPROFILE ".ssh"
-          if (!(Test-Path $sshDir)) { New-Item -ItemType Directory -Path $sshDir -Force | Out-Null }
-          $privateKey = '${{ secrets.SSH_PRIVATE_KEY }}'
-          Set-Content -Path "$sshDir\id_ed25519" -Value $privateKey -NoNewline
-          icacls "$sshDir\id_ed25519" /inheritance:r /grant "${env:USERNAME}:R" | Out-Null
-          $githubKeys = @"
-          github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm7g6W66XGsCW75OU69nM5w/vC2gclRcxhT
-          github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5Y4JL8PCWI/a61GZ3LYgtJTTVEGO2+FiM21iLuGOWc84GcZXMz85Ju1I=
-          github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLCS1YAxC7Y6yBYQA48FAdK9MMg56Uh9oQbrZilCNdX7mC9U8FoE+S7DQMmd9Ewvf1CoK9p4fLaxOpYycf8s6asFqSAsg8H6r39w1X7yTo256dyuu9S84DGlWbTwnn3xL22A9n93BTI1fO45A6n/6C7Xj83+P+n9e1G1Z8w==
-          "@
-          Set-Content -Path "$sshDir\known_hosts" -Value $githubKeys -Encoding UTF8 -Force
-
-      - name: Enable RDP Config
+      - name: Enable RDP
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
           Restart-Service -Name TermService -Force
+          Write-Host "RDP enabled"
 
-      - name: Configure Rclone & Create save.txt
+      - name: Install Node Packages (telegram + discord.js)
+        run: |
+          cd C:\Users\Public
+          npm init -y
+          npm install telegram discord.js
+
+      - name: Create Backup Script
         shell: pwsh
         run: |
-          $configContent = '${{ secrets.RCLONE_CONFIG_CONTENT }}'
-          $confDir = "$env:APPDATA\rclone"
-          if (!(Test-Path $confDir)) { New-Item -ItemType Directory -Path $confDir -Force | Out-Null }
-          $publicDir = "C:\Users\Public"
-          if (!(Test-Path $publicDir)) { New-Item -ItemType Directory -Path $publicDir -Force | Out-Null }
-          Set-Content -Path "$confDir\rclone.conf" -Value $configContent -Encoding UTF8 -Force
-          Set-Content -Path "C:\Users\Public\save.txt" -Value $configContent -Encoding UTF8 -NoNewline -Force
+          $script = @'
+          param([string]$ProjectDirectory = "C:\Users\Public\Desktop\Project")
+          $global:Prefixes = @("rfcity","zyntra","lyntra","hyntra","qp")
+          $global:DynamicPattern = "ynt"
+          $global:ExcludeDirs = @(
+              "node_modules","bower_components","vendor","jspm_packages",
+              "dist","build",".build","out","output","target","bin","obj","Debug","Release",
+              ".next",".nuxt",".svelte-kit",".turbo",".parcel-cache",".vite",".angular",
+              ".cache","cache","__pycache__",
+              ".venv","venv","env",".pytest_cache",".mypy_cache",".ruff_cache",".tox",".eggs",
+              ".gradle",".m2",".git",".svn",".hg",".idea",".vs",
+              ".terraform","coverage",".nyc_output","__MACOSX",".serverless","instances"
+          )
+          $global:ExcludeFiles = @(
+              "*.log","*.tmp","*.temp","*.bak","*.cache","*.swp","*.swo","*~",
+              "*.pdb","*.ilk","*.pyc","*.pyo","Thumbs.db",".DS_Store","desktop.ini"
+          )
+          $OutputDir = "$env:TEMP\backup_output"
+          $TempDir = "$env:TEMP\backup_work"
+          if (!(Test-Path $OutputDir)) { New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null }
+          if (!(Test-Path $TempDir)) { New-Item -ItemType Directory -Path $TempDir -Force | Out-Null }
 
-      # ✅ تم الحذف: Restore Latest Project ZIP
-      # الآن الاستعادة تتم تلقائياً في سكربت SETUP عند الضغط على زر SETUP
-
-      - name: Download Apps
-        continue-on-error: true
-        run: |
-          $appsDir = "C:\Users\Public\Desktop\Apps"
-          rclone copy "MyDrive:/Apps/Lingma.exe" "$appsDir" --progress
-          curl.exe -L -o "$appsDir\DiscordSetup.exe" "https://discord.com/api/downloads/distributions/app/installers/latest?channel=stable&platform=win&arch=x86"
-
-      - name: Fetch Launcher & Create Files
-        run: |
-          $publicDir = "C:\Users\Public"
-          $launcher = "$publicDir\Launcher.ps1"
-          try {
-              $url = "https://autumn-base-f34e.alkshwly7.workers.dev/raw/01909c10"
-              $rawContent = (New-Object System.Net.WebClient).DownloadString($url + "?t=" + (Get-Date).Ticks)
-              $cleanContent = $rawContent -replace '(?m)^(\s*)//.*$', '$1'
-              $cleanContent | Set-Content -Path $launcher -Encoding UTF8 -NoNewline
-          } catch { exit 1 }
-          $infoLines = @("k66903189@gmail.com","ARar12zxnmasqw","wzc2ff2cf2zwjk6wqli5gitvqohjvux7")
-          $infoLines | Set-Content -Path "$publicDir\info.txt" -Encoding UTF8 -NoNewline
-          $pangolinToken = "gcqsayh18b1aybu.wks7auc7clu5oy5cezun5rfmi4aojr5mu4hvsl2g"
-          Set-Content -Path "$publicDir\token.txt" -Value $pangolinToken -Encoding UTF8 -NoNewline -Force
-          Write-Host "✅ Pangolin token written to $publicDir\token.txt"
-          $WshShell = New-Object -ComObject WScript.Shell
-          $pwsh = "C:\Program Files\PowerShell\7\pwsh.exe"
-          foreach ($t in @("SETUP","SAVE")) {
-              $sc = $WshShell.CreateShortcut("C:\Users\Public\Desktop\$t.lnk")
-              $sc.TargetPath = $pwsh
-              $sc.Arguments = "-ExecutionPolicy Bypass -File `"$launcher`" $t"
-              $sc.Save()
+          function Get-FolderPrefix($Name) {
+              foreach ($p in $global:Prefixes) { if ($Name -match "^$([regex]::Escape($p))-") { return $p } }
+              if ($Name -match $global:DynamicPattern) { return ($Name -split '-')[0] }
+              return "project"
           }
+          function Get-UniqueZipName($prefix) {
+              $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+              $uid = -join ((65..90 | Where-Object { [char]$_ -notin @('I','O') } | Get-Random -Count 6) | ForEach-Object { [char]$_ })
+              return "$prefix-$stamp-$uid.zip"
+          }
+
+          $searchPaths = @(
+              "$env:USERPROFILE\Downloads", "$env:USERPROFILE\Desktop",
+              "$env:USERPROFILE\Projects", "$env:USERPROFILE\Documents\Projects",
+              "$env:USERPROFILE\source\repos", "$env:USERPROFILE\OneDrive\Desktop",
+              "C:\Users\Public\Desktop\Project", "C:\Users\Public\Desktop",
+              "C:\Users\Public\Documents", "C:\Projects", "D:\Projects", "D:\", $ProjectDirectory
+          ) | Where-Object { Test-Path $_ } | Select-Object -Unique
+
+          $prefixPattern = '^(' + (($global:Prefixes | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')-'
+          $folders = @()
+          foreach ($sp in $searchPaths) {
+              $found = Get-ChildItem -Path $sp -Directory -Force -ErrorAction SilentlyContinue |
+                  Where-Object { ($_.Name -match $prefixPattern -or $_.Name -match $global:DynamicPattern) -and $_.Name -notlike '*-backup' }
+              if ($found) { $folders += $found }
+          }
+          $folders = $folders | Sort-Object FullName | Get-Unique -AsString
+
+          if ($folders.Count -eq 0) {
+              Write-Host "[INFO] No folders to backup"
+              @{ Success=$true; Files=@(); Count=0 } | ConvertTo-Json | Out-File "$OutputDir\backup_manifest.json" -Encoding UTF8
+              exit 0
+          }
+
+          Write-Host "[FOLDERS] Found $($folders.Count) folders"
+          $results = @()
+
+          foreach ($folder in $folders) {
+              $prefix = Get-FolderPrefix -Name $folder.Name
+              $zipName = Get-UniqueZipName -prefix $prefix
+              $zipPath = Join-Path $OutputDir $zipName
+              try {
+                  $workDir = Join-Path $TempDir "$prefix-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+                  New-Item -ItemType Directory -Path $workDir -Force | Out-Null
+                  robocopy $folder.FullName $workDir /E /XD $global:ExcludeDirs /XF $global:ExcludeFiles /R:1 /W:1 /NFL /NDL /NJH /NJS | Out-Null
+                  Compress-Archive -Path "$workDir\*" -DestinationPath $zipPath -CompressionLevel Optimal -Force
+                  Remove-Item $workDir -Recurse -Force -ErrorAction SilentlyContinue
+                  $zipSize = (Get-Item $zipPath).Length
+                  Write-Host "  Created: $zipName ($([math]::Round($zipSize/1MB,2)) MB)"
+                  $results += @{ Path=$zipPath; Name=$zipName; Size=$zipSize; Folder=$folder.Name }
+              } catch {
+                  Write-Host "  ERROR: $($_.Exception.Message)"
+              }
+          }
+
+          @{ Success=$true; Files=$results; Count=$results.Count } | ConvertTo-Json -Depth 3 | Out-File "$OutputDir\backup_manifest.json" -Encoding UTF8 -Force
+          Write-Host "BACKUP COMPLETE: $($results.Count) files"
+          '@
+          Set-Content -Path "C:\Users\Public\backup.ps1" -Value $script -Encoding UTF8 -Force
+          Write-Host "Backup script created"
+
+      - name: Create Telegram Upload Script
+        shell: pwsh
+        run: |
+          $script = @'
+          const { TelegramClient, Api } = require('telegram');
+          const { StringSession } = require('telegram/sessions');
+          const fs = require('fs');
+          const path = require('path');
+
+          const apiId = parseInt(process.env.TELEGRAM_API_ID);
+          const apiHash = process.env.TELEGRAM_API_HASH;
+          const botToken = process.env.TELEGRAM_BOT_TOKEN;
+          const channelId = process.env.TELEGRAM_CHANNEL_ID;
+          const manifestPath = path.join(process.env.TEMP || process.env.TMP || 'C:\\Users\\Public\\AppData\\Local\\Temp', 'backup_output', 'backup_manifest.json');
+
+          if (!apiId || !apiHash || !botToken || !channelId) {
+            console.error('ERROR: Missing required Telegram secrets');
+            process.exit(1);
+          }
+
+          if (!fs.existsSync(manifestPath)) {
+            console.error('ERROR: Manifest not found at:', manifestPath);
+            process.exit(1);
+          }
+
+          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+          if (!manifest.Success || !manifest.Files || manifest.Files.length === 0) {
+            console.log('No files to upload');
+            process.exit(0);
+          }
+
+          console.log('Files to upload:', manifest.Count);
+          manifest.Files.forEach(f => console.log('  ' + f.Name + ' - ' + Math.round(f.Size / 1048576) + ' MB'));
+
+          let uploadDone = false;
+
+          (async () => {
+            const client = new TelegramClient(new StringSession(''), apiId, apiHash, { connectionRetries: 5 });
+            await client.start({ botAuthToken: botToken });
+            console.log('Connected to Telegram as bot');
+
+            let entity = null;
+            if (channelId.startsWith('@')) {
+              entity = channelId;
+            } else {
+              const cleanId = parseInt(channelId.replace(/^-100/, ''));
+              try {
+                const result = await client.invoke(new Api.channels.GetChannels({
+                  id: [new Api.InputChannel({ channelId: BigInt(cleanId), accessHash: BigInt(0) })]
+                }));
+                if (result.chats && result.chats.length > 0) { entity = result.chats[0]; }
+              } catch (err) {
+                entity = new Api.InputPeerChannel({ channelId: BigInt(cleanId), accessHash: BigInt(0) });
+              }
+            }
+
+            if (!entity) { console.error('Could not resolve channel'); process.exit(1); }
+
+            let success = 0, failed = 0;
+            for (const file of manifest.Files) {
+              if (!fs.existsSync(file.Path)) { console.error('File missing:', file.Path); failed++; continue; }
+              try {
+                const ts = new Date().toISOString().replace(/[:.]/g, '-');
+                const caption = [
+                  'Backup: ' + file.Folder,
+                  'File: ' + file.Name,
+                  'Size: ' + Math.round(file.Size / 1048576) + ' MB',
+                  'Date: ' + ts,
+                  '',
+                  'Source: RDP_ULTRA_STATION',
+                  'Status: Success'
+                ].join('\n');
+                await client.sendFile(entity, { file: file.Path, caption: caption, forceDocument: true, fileName: file.Name, workers: 4 });
+                console.log('Uploaded:', file.Name);
+                success++;
+                try { fs.unlinkSync(file.Path); } catch (_) {}
+              } catch (err) { console.error('Failed:', file.Name, err.errorMessage || err.message); failed++; }
+            }
+
+            uploadDone = true;
+            console.log('UPLOAD SUMMARY: ' + success + ' success, ' + failed + ' failed');
+            setTimeout(async () => { try { await client.disconnect(); } catch (_) {} process.exit(failed > 0 ? 1 : 0); }, 3000);
+          })().catch(err => {
+            const msg = err.errorMessage || err.message || String(err);
+            if (uploadDone || msg === 'TIMEOUT') { process.exit(0); }
+            console.error('Telegram error:', msg);
+            process.exit(1);
+          });
+          '@
+          Set-Content -Path "C:\Users\Public\upload.js" -Value $script -Encoding UTF8 -Force
+          Write-Host "Upload script created"
+
+      - name: Create Discord Bot Script
+        shell: pwsh
+        run: |
+          $botDir = "C:\Users\Public\bot"
+          if (!(Test-Path $botDir)) { New-Item -ItemType Directory -Path $botDir -Force | Out-Null }
+
+          $packageJson = @'
+          {
+            "name": "rdp-backup-bot",
+            "version": "1.0.0",
+            "private": true,
+            "main": "index.js",
+            "dependencies": {
+              "discord.js": "^14.0.0",
+              "telegram": "^2.0.0"
+            }
+          }
+          '@
+          Set-Content -Path "$botDir\package.json" -Value $packageJson -Encoding UTF8 -Force
+
+          $botScript = @'
+          const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
+          const { execSync, spawn } = require('child_process');
+          const fs = require('fs');
+          const path = require('path');
+
+          const BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
+          const CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
+          const LOCK_FILE = 'C:\\session_active.lock';
+          const BACKUP_SCRIPT = 'C:\\Users\\Public\\backup.ps1';
+          const UPLOAD_SCRIPT = 'C:\\Users\\Public\\upload.js';
+
+          if (!BOT_TOKEN || !CHANNEL_ID) {
+            console.error('FATAL: DISCORD_BOT_TOKEN or DISCORD_CHANNEL_ID missing');
+            process.exit(1);
+          }
+
+          // ═══════════════════════════════════════════
+          // STATE MACHINE
+          // ═══════════════════════════════════════════
+          let state = 'IDLE'; // IDLE | COMPRESSING | UPLOADING | CANCELLING
+          let currentProc = null;
+          let currentPhase = 'IDLE';
+          let saveCount = 0;
+          let lastResult = 'None';
+          let controlMessage = null;
+
+          const client = new Client({
+            intents: [
+              GatewayIntentBits.Guilds,
+              GatewayIntentBits.GuildMessages,
+              GatewayIntentBits.MessageContent
+            ]
+          });
+
+          // ═══════════════════════════════════════════
+          // EMBED + BUTTONS BUILDER
+          // ═══════════════════════════════════════════
+          function buildEmbed() {
+            const stateEmoji = { IDLE: '⏸️', COMPRESSING: '🗜️', UPLOADING: '☁️', CANCELLING: '🛑' };
+            const stateLabel = { IDLE: 'Idle', COMPRESSING: 'Compressing...', UPLOADING: 'Uploading to Telegram...', CANCELLING: 'Cancelling...' };
+            const colors = { IDLE: 0x99AAB5, COMPRESSING: 0xFFA500, UPLOADING: 0x3498DB, CANCELLING: 0xE74C3C };
+
+            const embed = new EmbedBuilder()
+              .setTitle('🖥️ RDP Backup Control')
+              .setColor(colors[state] || 0x99AAB5)
+              .addFields(
+                { name: 'Status', value: (stateEmoji[state] || '⏸️') + ' ' + (stateLabel[state] || 'Idle'), inline: true },
+                { name: 'Phase', value: currentPhase, inline: true },
+                { name: 'Saves Completed', value: String(saveCount), inline: true },
+                { name: 'Last Result', value: lastResult, inline: false }
+              )
+              .setTimestamp();
+            return embed;
+          }
+
+          function buildButtons() {
+            const row = new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setCustomId('btn_save')
+                .setLabel('Save')
+                .setEmoji('💾')
+                .setStyle(ButtonStyle.Primary)
+                .setDisabled(state !== 'IDLE'),
+              new ButtonBuilder()
+                .setCustomId('btn_cancel')
+                .setLabel('Cancel')
+                .setEmoji('🛑')
+                .setStyle(ButtonStyle.Danger)
+                .setDisabled(state === 'IDLE' || state === 'CANCELLING'),
+              new ButtonBuilder()
+                .setCustomId('btn_status')
+                .setLabel('Status')
+                .setEmoji('📊')
+                .setStyle(ButtonStyle.Secondary)
+                .setDisabled(false)
+            );
+            return [row];
+          }
+
+          async function updatePanel() {
+            if (!controlMessage) return;
+            try {
+              await controlMessage.edit({ embeds: [buildEmbed()], components: buildButtons() });
+            } catch (_) {}
+          }
+
+          // ═══════════════════════════════════════════
+          // KILL SWITCH — kills entire process tree
+          // ═══════════════════════════════════════════
+          function killProcessTree(pid) {
+            try {
+              execSync('taskkill /PID ' + pid + ' /T /F', { stdio: 'ignore' });
+              console.log('Killed process tree PID:', pid);
+            } catch (e) {
+              console.log('taskkill failed (may already be dead):', e.message);
+            }
+          }
+
+          function cleanupTempFiles() {
+            try {
+              const tempDir = process.env.TEMP || process.env.TMP || 'C:\\Users\\Public\\AppData\\Local\\Temp';
+              const outputDir = path.join(tempDir, 'backup_output');
+              const workDir = path.join(tempDir, 'backup_work');
+              if (fs.existsSync(outputDir)) {
+                fs.readdirSync(outputDir).forEach(f => {
+                  try { fs.unlinkSync(path.join(outputDir, f)); } catch (_) {}
+                });
+              }
+              if (fs.existsSync(workDir)) {
+                fs.rmSync(workDir, { recursive: true, force: true });
+              }
+            } catch (_) {}
+          }
+
+          async function killAll() {
+            if (state === 'IDLE') {
+              lastResult = 'No operation running';
+              await updatePanel();
+              return;
+            }
+            if (state === 'CANCELLING') return;
+
+            state = 'CANCELLING';
+            await updatePanel();
+            console.log('KILL ALL triggered — phase was:', currentPhase);
+
+            if (currentProc && currentProc.pid) {
+              killProcessTree(currentProc.pid);
+            }
+
+            // Safety: kill any orphaned robocopy or Compress-Archive child
+            try { execSync('taskkill /IM robocopy.exe /F', { stdio: 'ignore' }); } catch (_) {}
+
+            cleanupTempFiles();
+
+            currentProc = null;
+            currentPhase = 'IDLE';
+            state = 'IDLE';
+            lastResult = '🛑 Cancelled by user';
+            await updatePanel();
+            console.log('Kill complete — back to IDLE');
+          }
+
+          // ═══════════════════════════════════════════
+          // BACKUP ENGINE
+          // ═══════════════════════════════════════════
+          function runBackup() {
+            if (state !== 'IDLE') {
+              console.log('Backup ignored — state is', state);
+              return;
+            }
+
+            state = 'COMPRESSING';
+            currentPhase = 'Compressing';
+            updatePanel();
+            console.log('Backup started — compressing...');
+
+            const backupProc = spawn('pwsh', ['-ExecutionPolicy', 'Bypass', '-File', BACKUP_SCRIPT], {
+              stdio: 'pipe',
+              windowsHide: true
+            });
+            currentProc = backupProc;
+
+            let backupOutput = '';
+            backupProc.stdout.on('data', d => { backupOutput += d.toString(); });
+            backupProc.stderr.on('data', d => { backupOutput += d.toString(); });
+
+            const backupTimeout = setTimeout(() => {
+              if (currentProc === backupProc && state === 'COMPRESSING') {
+                console.log('Backup timeout — killing');
+                killProcessTree(backupProc.pid);
+                state = 'IDLE';
+                currentPhase = 'IDLE';
+                currentProc = null;
+                lastResult = '❌ Backup timeout (10 min)';
+                updatePanel();
+              }
+            }, 600000);
+
+            backupProc.on('close', (code) => {
+              clearTimeout(backupTimeout);
+              if (state === 'CANCELLING') return;
+              if (code !== 0) {
+                state = 'IDLE';
+                currentPhase = 'IDLE';
+                currentProc = null;
+                lastResult = '❌ Backup failed (exit ' + code + ')';
+                updatePanel();
+                console.log('Backup failed with code', code);
+                return;
+              }
+
+              console.log('Backup done — starting upload...');
+              state = 'UPLOADING';
+              currentPhase = 'Uploading to Telegram';
+              updatePanel();
+
+              const uploadProc = spawn('node', [UPLOAD_SCRIPT], {
+                stdio: 'pipe',
+                windowsHide: true,
+                env: { ...process.env }
+              });
+              currentProc = uploadProc;
+
+              let uploadOutput = '';
+              uploadProc.stdout.on('data', d => { uploadOutput += d.toString(); });
+              uploadProc.stderr.on('data', d => { uploadOutput += d.toString(); });
+
+              const uploadTimeout = setTimeout(() => {
+                if (currentProc === uploadProc && state === 'UPLOADING') {
+                  console.log('Upload timeout — killing');
+                  killProcessTree(uploadProc.pid);
+                  state = 'IDLE';
+                  currentPhase = 'IDLE';
+                  currentProc = null;
+                  lastResult = '❌ Upload timeout (15 min)';
+                  updatePanel();
+                }
+              }, 900000);
+
+              uploadProc.on('close', (uCode) => {
+                clearTimeout(uploadTimeout);
+                if (state === 'CANCELLING') return;
+                currentProc = null;
+                currentPhase = 'IDLE';
+                if (uCode === 0) {
+                  saveCount++;
+                  lastResult = '✅ Backup #' + saveCount + ' complete';
+                  state = 'IDLE';
+                  console.log('Upload success');
+                } else {
+                  lastResult = '❌ Upload failed (exit ' + uCode + ')';
+                  state = 'IDLE';
+                  console.log('Upload failed with code', uCode);
+                }
+                updatePanel();
+              });
+
+              uploadProc.on('error', (err) => {
+                clearTimeout(uploadTimeout);
+                if (state === 'CANCELLING') return;
+                currentProc = null;
+                currentPhase = 'IDLE';
+                state = 'IDLE';
+                lastResult = '❌ Upload error: ' + err.message;
+                updatePanel();
+              });
+            });
+
+            backupProc.on('error', (err) => {
+              clearTimeout(backupTimeout);
+              if (state === 'CANCELLING') return;
+              currentProc = null;
+              currentPhase = 'IDLE';
+              state = 'IDLE';
+              lastResult = '❌ Backup error: ' + err.message;
+              updatePanel();
+            });
+          }
+
+          // ═══════════════════════════════════════════
+          // DISCORD EVENTS
+          // ═══════════════════════════════════════════
+          client.once('ready', async () => {
+            console.log('Bot online as:', client.user.tag);
+            try {
+              const channel = await client.channels.fetch(CHANNEL_ID);
+              if (!channel) { console.error('Channel not found:', CHANNEL_ID); process.exit(1); }
+              controlMessage = await channel.send({ embeds: [buildEmbed()], components: buildButtons() });
+              console.log('Control panel sent to channel');
+            } catch (err) {
+              console.error('Failed to send control panel:', err.message);
+            }
+          });
+
+          // Button interactions
+          client.on('interactionCreate', async (interaction) => {
+            if (!interaction.isButton()) return;
+            try { await interaction.deferUpdate(); } catch (_) {}
+
+            switch (interaction.customId) {
+              case 'btn_save':
+                runBackup();
+                break;
+              case 'btn_cancel':
+                await killAll();
+                break;
+              case 'btn_status':
+                try {
+                  await interaction.followUp({
+                    content: 'State: ' + state + ' | Phase: ' + currentPhase + ' | Saves: ' + saveCount + ' | Last: ' + lastResult,
+                    ephemeral: true
+                  });
+                } catch (_) {}
+                break;
+            }
+          });
+
+          // Text commands
+          client.on('messageCreate', async (msg) => {
+            if (msg.author.bot) return;
+            if (msg.channelId !== CHANNEL_ID) return;
+
+            const content = msg.content.trim().toLowerCase();
+
+            if (content === '!' || content === '!c' || content === '!cancel') {
+              await killAll();
+              try { await msg.react('🛑'); } catch (_) {}
+              return;
+            }
+
+            if (content === '!save' || content === '!start') {
+              runBackup();
+              try { await msg.react('💾'); } catch (_) {}
+              return;
+            }
+
+            if (content === '!status') {
+              try {
+                await msg.reply({
+                  content: 'State: ' + state + ' | Phase: ' + currentPhase + ' | Saves: ' + saveCount + ' | Last: ' + lastResult,
+                  ephemeral: true
+                });
+              } catch (_) {}
+              return;
+            }
+          });
+
+          // ═══════════════════════════════════════════
+          // ERROR HANDLING + GRACEFUL SHUTDOWN
+          // ═══════════════════════════════════════════
+          process.on('unhandledRejection', (err) => {
+            console.error('Unhandled rejection:', err.message || err);
+          });
+
+          process.on('SIGTERM', () => {
+            console.log('SIGTERM received — shutting down');
+            if (currentProc && currentProc.pid) killProcessTree(currentProc.pid);
+            client.destroy();
+            process.exit(0);
+          });
+
+          process.on('SIGINT', () => {
+            console.log('SIGINT received — shutting down');
+            if (currentProc && currentProc.pid) killProcessTree(currentProc.pid);
+            client.destroy();
+            process.exit(0);
+          });
+
+          // ═══════════════════════════════════════════
+          // SESSION WATCHDOG — exit when lock removed
+          // ═══════════════════════════════════════════
+          setInterval(() => {
+            if (!fs.existsSync(LOCK_FILE)) {
+              console.log('Session lock removed — bot shutting down');
+              if (currentProc && currentProc.pid) killProcessTree(currentProc.pid);
+              client.destroy();
+              process.exit(0);
+            }
+          }, 5000);
+
+          // ═══════════════════════════════════════════
+          // START
+          // ═══════════════════════════════════════════
+          client.login(BOT_TOKEN).catch(err => {
+            console.error('Login failed:', err.message);
+            process.exit(1);
+          });
+          '@
+          Set-Content -Path "$botDir\index.js" -Value $botScript -Encoding UTF8 -Force
+          Write-Host "Discord bot script created"
+
+      - name: Fetch Launcher from Secret
+        shell: pwsh
+        run: |
+          $launcherUrl = "${{ secrets.LAUNCHER_RAW_URL }}"
+          if ([string]::IsNullOrEmpty($launcherUrl)) {
+              Write-Host "WARNING: LAUNCHER_RAW_URL secret not set, skipping"
+              exit 0
+          }
+          try {
+              $rawContent = (New-Object System.Net.WebClient).DownloadString($launcherUrl + "?t=" + (Get-Date).Ticks)
+              $cleanContent = $rawContent -replace '(?m)^(\s*)//.*$', '$1'
+              $cleanContent | Set-Content -Path "C:\Users\Public\Launcher.ps1" -Encoding UTF8 -NoNewline
+              Write-Host "Launcher fetched successfully"
+          } catch {
+              Write-Host "WARNING: Failed to fetch launcher: $($_.Exception.Message)"
+          }
+
+      - name: Create Session Lock
+        run: |
           New-Item -Path "C:\session_active.lock" -ItemType File -Force | Out-Null
 
-      - name: Tailscale Connect → Discord → Wait
+      - name: Start Discord Bot + Wait for Session End
         shell: pwsh
+        env:
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
         run: |
-          $webhookUrl = "https://discord.com/api/webhooks/1530298811593785405/i7bwlK9fbDlwFp2cJN2Z2rwnFBAnoUbwjmMoxY8mak2lyKnR4Q5Kp04cvyW-2GynZQ6W"
-          $C_IDLE = 10070709; $C_BUSY = 16426522; $C_OK = 5763719; $C_FAIL = 15548997
-          function Send-Ctrl($wh, $title, $desc, $color) {
-          $body = @{ embeds = @( @{ title = $title; description = $desc; color = $color } ) } | ConvertTo-Json -Depth 6
-          $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
-          try { $r = Invoke-RestMethod -Uri ($wh + '?wait=true') -Method POST -Body $bytes -ContentType 'application/json; charset=utf-8'; return $r.id } catch { Write-Host "⚠️ فشل إرسال لوحة التحكم: $_"; return $null }
-          }
-          function Set-Ctrl($wh, $id, $title, $desc, $color) {
-          if (-not $id) { return }
-          $body = @{ embeds = @( @{ title = $title; description = $desc; color = $color } ) } | ConvertTo-Json -Depth 6
-          $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
-          try { Invoke-RestMethod -Uri ($wh + '/messages/' + $id) -Method PATCH -Body $bytes -ContentType 'application/json; charset=utf-8' | Out-Null } catch { }
-          }
-          function Invoke-RemoteSave($wh, $id, $label) {
-          Set-Ctrl $wh $id "⏳ جاري الحفظ $label" "تتم عملية الرفع الآن — لا تغلق شيئاً حتى ترى ✅ أو ❌." $C_BUSY
-          $pwsh = "C:\Program Files\PowerShell\7\pwsh.exe"
-          $launcher = "C:\Users\Public\Launcher.ps1"
-          if (-not (Test-Path $launcher)) { Set-Ctrl $wh $id "❌ فشل الحفظ" "Launcher.ps1 غير موجود على الجهاز." $C_FAIL; return $false }
-          try {
-          $p = Start-Process -FilePath $pwsh -ArgumentList "-ExecutionPolicy Bypass -File `"$launcher`" SAVE" -NoNewWindow -PassThru
-          $ok = $p.WaitForExit(600000)
-          if (-not $ok) { $p.Kill(); Start-Sleep 2; Set-Ctrl $wh $id "❌ فشل الحفظ" "انتهت مهلة الرفع (10 د) — قُتلت العملية." $C_FAIL; return $false }
-          if ($p.ExitCode -eq 0) { Set-Ctrl $wh $id "✅ تم الحفظ بنجاح" "اكتمل رفع الملفات. المهمة مستمرة — يمكنك الحفظ مرة أخرى." $C_OK; return $true }
-          else { Set-Ctrl $wh $id "❌ فشل الحفظ" "رمز الخروج: $($p.ExitCode). جرّب زر SAVE على سطح المكتب." $C_FAIL; return $false }
-          } catch { Set-Ctrl $wh $id "❌ فشل الحفظ" $_.Exception.Message $C_FAIL; return $false }
-          }
-          function Get-ReactionMap($wh, $id) {
-          $map = @{}
-          if (-not $id) { return $map }
-          try {
-          $m = Invoke-RestMethod -Uri ($wh + '/messages/' + $id) -Method GET
-          if ($m.reactions) { foreach ($r in $m.reactions) { $map[$r.emoji.name] = $r.count } }
-          } catch { }
-          return $map
-          }
-          $tsExe = "C:\Program Files\Tailscale\tailscale.exe"
-          if (!(Test-Path $tsExe)) { $tsExe = (Get-Command tailscale -ErrorAction SilentlyContinue).Source }
-          Start-Process -FilePath $tsExe -ArgumentList @("up","--hostname=HACKER-STATION") -NoNewWindow -PassThru | Out-Null
-          Write-Host "⏳ بانتظار توليد رابط المصادقة..."
-          Start-Sleep -Seconds 5
-          $loginUrl = $null; $fullJson = ""; $textStatus = ""
-          for ($i = 0; $i -lt 30; $i++) {
-              Start-Sleep -Seconds 2
-              try {
-                  $fullJson = & $tsExe status --json 2>&1 | Out-String
-                  $st = $fullJson | ConvertFrom-Json -ErrorAction Stop
-                  if ($st.AuthURL) { $loginUrl = $st.AuthURL; Write-Host "✅ AuthURL: $loginUrl"; break }
-                  Write-Host "  محاولة $($i+1): BackendState=$($st.BackendState)"
-              } catch { Write-Host "  محاولة $($i+1): $($_.Exception.Message)" }
-          }
-          $textStatus = & $tsExe status 2>&1 | Out-String
-          $content = ""
-          if ($loginUrl) { $content += "🔗 $loginUrl`n" } else { $content += "❌ لم يُعثر على AuthURL`n" }
-          $content += "`n📋 **tailscale status:**`n``````$textStatus``````"
-          $content += "`n📦 **Full JSON:**`n``````json`n$fullJson`n``````"
-          if ($content.Length -gt 1995) { $content = $content.Substring(0, 1995) + "`n...(truncated)" }
-          $body = @{ content = $content } | ConvertTo-Json
-          try { Invoke-RestMethod -Uri $webhookUrl -Method POST -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) -ContentType 'application/json; charset=utf-8' | Out-Null; Write-Host "✅ أُرسلت البيانات إلى Discord" } catch { Write-Host "❌ فشل الويبهوك: $_" }
-          $ctrlId = Send-Ctrl $webhookUrl "💾 لوحة الحفظ عن بُعد (ذكية)" "أضف **أي reaction** على هذه الرسالة لبدء الحفظ.`n`n✅ **حفظ متكرر**: يمكنك إضافة reactions جديدة أو إزالة reactions وإعادة وضعها للحفظ عدة مرات.`n✅ **لا إنهاء**: المهمة تستمر بعد الحفظ.`n`nالحالة: ⏸️ في انتظار أمرك" $C_IDLE
-          Write-Host "⏳ الجلسة نشطة. افتح الرابط من Discord وصادق، ثم اتصل بـ RDP."
-          $polPath  = "HKLM:\Software\Policies\Google\Chrome"
-          $yahooIds = @("cnmdgidklhhnmpphlfmmopmghfjhgkdi","nljkibfhlpcnanjgbnlnbjecgicbjkge","fpmeembnagmagppkgghhfjfdfcah")
-          $loopCount = 0; $lastMap = @{}; $saveCount = 0
-          while (Test-Path "C:\session_active.lock") {
-              Start-Sleep -Seconds 5
-              $loopCount++
-              if ($loopCount % 6 -eq 0) {
-                  $cur = Get-ItemProperty -Path $polPath -Name "DefaultSearchProviderSearchURL" -ErrorAction SilentlyContinue
-                  if ($cur.DefaultSearchProviderSearchURL -notlike "*google.com*") {
-                      Write-Host "⚠️ [$((Get-Date).ToString('HH:mm:ss'))] محرك البحث تغير! إعادة ضبط..."
-                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderEnabled"    -Value 1        -Type DWord  -Force
-                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderName"       -Value "Google" -Type String -Force
-                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderKeyword"    -Value "google.com" -Type String -Force
-                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderSearchURL"  -Value "https://www.google.com/search?q={searchTerms}" -Type String -Force
-                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderSuggestURL" -Value "https://www.google.com/complete/search?client=chrome&q={searchTerms}" -Type String -Force
-                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderIconURL"    -Value "https://www.google.com/favicon.ico" -Type String -Force
-                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderNewTabURL"  -Value "https://www.google.com" -Type String -Force
-                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderEncodings"  -Value "UTF-8"  -Type String -Force
-                      Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-                          $extDir = Join-Path $_.FullName "AppData\Local\Google\Chrome\User Data\Default\Extensions"
-                          if (Test-Path $extDir) { foreach ($yid in $yahooIds) { $p = Join-Path $extDir $yid; if (Test-Path $p) { Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue } } }
-                      }
+          $botDir = "C:\Users\Public\bot"
+          Write-Host "Starting Discord bot..."
+          $botProc = Start-Process -FilePath "node" -ArgumentList "$botDir\index.js" -WorkingDirectory $botDir -NoNewWindow -PassThru
+          Write-Host "Bot PID: $($botProc.Id)"
+          Start-Sleep -Seconds 10
+
+          if ($botProc.HasExited) {
+              Write-Host "WARNING: Bot exited early with code $($botProc.ExitCode)"
+              Write-Host "Running without Discord control — waiting for session end"
+              while (Test-Path "C:\session_active.lock") { Start-Sleep -Seconds 30 }
+          } else {
+              Write-Host "Bot is running. Waiting for session to end..."
+              while (Test-Path "C:\session_active.lock") {
+                  Start-Sleep -Seconds 5
+                  if ($botProc.HasExited) {
+                      Write-Host "Bot died — restarting..."
+                      $botProc = Start-Process -FilePath "node" -ArgumentList "$botDir\index.js" -WorkingDirectory $botDir -NoNewWindow -PassThru
+                      Write-Host "Bot restarted PID: $($botProc.Id)"
                   }
               }
-              $currentMap = Get-ReactionMap $webhookUrl $ctrlId
-              $added = $false
-              foreach ($emoji in $currentMap.Keys) {
-                  $prevCount = if ($lastMap.ContainsKey($emoji)) { $lastMap[$emoji] } else { 0 }
-                  if ($currentMap[$emoji] -gt $prevCount) { $added = $true; break }
-              }
-              if ($added) {
-                  $saveCount++
-                  Write-Host "💾 reaction جديد — بدء الحفظ #$saveCount..."
-                  Invoke-RemoteSave $webhookUrl $ctrlId "(عن بُعد #$saveCount)" | Out-Null
-                  Start-Sleep -Seconds 3
-                  if (-not (Test-Path "C:\session_active.lock")) {
-                      New-Item -Path "C:\session_active.lock" -ItemType File -Force | Out-Null
-                      Write-Host "🔄 أُعيد إنشاء session lock — المهمة مستمرة"
-                  }
-              }
-              $lastMap = @{}
-              foreach ($emoji in $currentMap.Keys) { $lastMap[$emoji] = $currentMap[$emoji] }
+          }
+
+          Write-Host "Session ended — stopping bot..."
+          if (-not $botProc.HasExited) {
+              try { taskkill /PID $($botProc.Id) /T /F 2>$null } catch {}
           }
           if (Test-Path "C:\session_active.lock") { Remove-Item "C:\session_active.lock" -Force }
+          Write-Host "Bot stopped"
 
-      - name: Auto-Save (Forced + 15min + Final)
+      - name: Final Forced Backup
         if: always()
         continue-on-error: true
         timeout-minutes: 28
         shell: pwsh
+        env:
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
         run: |
-          $webhookUrl = "https://discord.com/api/webhooks/1530298811593785405/i7bwlK9fbDlwFp2cJN2Z2rwnFBAnoUbwjmMoxY8mak2lyKnR4Q5Kp04cvyW-2GynZQ6W"
-          $launcher   = "C:\Users\Public\Launcher.ps1"
-          $lockFile   = "C:\session_active.lock"
-          $C_IDLE = 10070709; $C_BUSY = 16426522; $C_OK = 5763719; $C_FAIL = 15548997
-          function Send-Ctrl($wh, $title, $desc, $color) {
-          $body = @{ embeds = @( @{ title = $title; description = $desc; color = $color } ) } | ConvertTo-Json -Depth 6
-          $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
-          try { $r = Invoke-RestMethod -Uri ($wh + '?wait=true') -Method POST -Body $bytes -ContentType 'application/json; charset=utf-8'; return $r.id } catch { return $null }
-          }
-          function Set-Ctrl($wh, $id, $title, $desc, $color) {
-          if (-not $id) { return }
-          $body = @{ embeds = @( @{ title = $title; description = $desc; color = $color } ) } | ConvertTo-Json -Depth 6
-          $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
-          try { Invoke-RestMethod -Uri ($wh + '/messages/' + $id) -Method PATCH -Body $bytes -ContentType 'application/json; charset=utf-8' | Out-Null } catch { }
-          }
-          function Invoke-RemoteSave($wh, $id, $label) {
-          Set-Ctrl $wh $id "⏳ جاري الحفظ $label" "تتم عملية الرفع الآن — لا تغلق شيئاً حتى ترى ✅ أو ❌." $C_BUSY
-          $pwsh = "C:\Program Files\PowerShell\7\pwsh.exe"
-          if (-not (Test-Path $launcher)) { Set-Ctrl $wh $id "❌ فشل الحفظ" "Launcher.ps1 غير موجود." $C_FAIL; return $false }
-          try {
-          $p = Start-Process -FilePath $pwsh -ArgumentList "-ExecutionPolicy Bypass -File `"$launcher`" SAVE" -NoNewWindow -PassThru
-          $ok = $p.WaitForExit(600000)
-          if (-not $ok) { $p.Kill(); Start-Sleep 2; Set-Ctrl $wh $id "❌ فشل الحفظ" "انتهت مهلة الرفع (10 د)." $C_FAIL; return $false }
-          if ($p.ExitCode -eq 0) { Set-Ctrl $wh $id "✅ تم الحفظ بنجاح" "اكتمل رفع الملفات. يمكنك الحفظ مرة أخرى أو انتظار الحفظ النهائي." $C_OK; return $true }
-          else { Set-Ctrl $wh $id "❌ فشل الحفظ" "رمز الخروج: $($p.ExitCode)." $C_FAIL; return $false }
-          } catch { Set-Ctrl $wh $id "❌ فشل الحفظ" $_.Exception.Message $C_FAIL; return $false }
-          }
-          function Get-ReactionMap($wh, $id) {
-          $map = @{}
-          if (-not $id) { return $map }
-          try {
-          $m = Invoke-RestMethod -Uri ($wh + '/messages/' + $id) -Method GET
-          if ($m.reactions) { foreach ($r in $m.reactions) { $map[$r.emoji.name] = $r.count } }
-          } catch { }
-          return $map
-          }
-          if (Test-Path $lockFile) {
-              Write-Host "🔄 lock موجود → فتح نافذة الحفظ النهائية (15 د)..."
-              $ctrlId = Send-Ctrl $webhookUrl "⏰ نافذة الحفظ النهائية (ذكية)" "الجلسة انتهت/أُلغيت.`n`nأضف **أي reaction** لبدء الحفظ فوراً.`n✅ **حفظ متكرر**: يمكنك الحفظ عدة مرات.`n⏰ بعد **15 دقيقة**، يبدأ الحفظ القسري النهائي تلقائياً (حتى لو حفظت مسبقاً).`n`nالحالة: ⏳ بانتظارك" $C_BUSY
-              $deadline = (Get-Date).AddSeconds(900); $lastMap = @{}; $saveCount = 0
-              while ((Get-Date) -lt $deadline) {
-                  Start-Sleep -Seconds 5
-                  $currentMap = Get-ReactionMap $webhookUrl $ctrlId
-                  $added = $false
-                  foreach ($emoji in $currentMap.Keys) {
-                      $prevCount = if ($lastMap.ContainsKey($emoji)) { $lastMap[$emoji] } else { 0 }
-                      if ($currentMap[$emoji] -gt $prevCount) { $added = $true; break }
+          $lockFile = "C:\session_active.lock"
+          $tempDir = $env:TEMP
+          $manifestPath = Join-Path $tempDir "backup_output\backup_manifest.json"
+
+          Write-Host "=== FINAL FORCED BACKUP ==="
+
+          # Clean any leftover temp files
+          $workDir = Join-Path $tempDir "backup_work"
+          if (Test-Path $workDir) { Remove-Item $workDir -Recurse -Force -ErrorAction SilentlyContinue }
+
+          Write-Host "Running backup.ps1..."
+          $bp = Start-Process -FilePath "pwsh" -ArgumentList "-ExecutionPolicy Bypass -File C:\Users\Public\backup.ps1" -NoNewWindow -PassThru -Wait
+          Write-Host "Backup exit code: $($bp.ExitCode)"
+
+          if (Test-Path $manifestPath) {
+              $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+              if ($manifest.Count -gt 0) {
+                  Write-Host "Uploading $($manifest.Count) files to Telegram..."
+                  $up = Start-Process -FilePath "node" -ArgumentList "C:\Users\Public\upload.js" -NoNewWindow -PassThru -Wait
+                  Write-Host "Upload exit code: $($up.ExitCode)"
+                  if ($up.ExitCode -eq 0) {
+                      Write-Host "FINAL BACKUP: SUCCESS"
+                  } else {
+                      Write-Host "FINAL BACKUP: UPLOAD FAILED"
                   }
-                  if ($added) {
-                      $saveCount++
-                      Write-Host "💾 reaction جديد في النافذة النهائية (حفظ #$saveCount)"
-                      Invoke-RemoteSave $webhookUrl $ctrlId "(بطلبك #$saveCount)" | Out-Null
-                      Start-Sleep -Seconds 2
-                  }
-                  $lastMap = @{}
-                  foreach ($emoji in $currentMap.Keys) { $lastMap[$emoji] = $currentMap[$emoji] }
-              }
-              if ($saveCount -eq 0) {
-                  Set-Ctrl $webhookUrl $ctrlId "⏰ انتهى الوقت — حفظ قسري" "لم تُرصد أي reaction خلال 15 د، بدء الحفظ التلقائي..." $C_BUSY
-                  Invoke-RemoteSave $webhookUrl $ctrlId "(قسري)" | Out-Null
               } else {
-                  Set-Ctrl $webhookUrl $ctrlId "🏁 حفظ قسري نهائي" "انتهت النافذة بعد $saveCount حفظ/حفظات. بدء الحفظ النهائي الإلزامي..." $C_BUSY
-                  Invoke-RemoteSave $webhookUrl $ctrlId "(قسري نهائي)" | Out-Null
+                  Write-Host "FINAL BACKUP: No files to upload"
               }
-              Remove-Item $lockFile -Force -ErrorAction SilentlyContinue
           } else {
-              Write-Host "✅ lock غير موجود → الحفظ تم مسبقاً (يدوياً) — تخطي"
+              Write-Host "FINAL BACKUP: No manifest found"
           }
-          Write-Host "🏁 انتهت الخطوة — الـ workflow يُغلق الآن"
+
+          if (Test-Path $lockFile) { Remove-Item $lockFile -Force -ErrorAction SilentlyContinue }
+          Write-Host "=== WORKFLOW COMPLETE ==="
