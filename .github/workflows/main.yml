@@ -1,674 +1,668 @@
-name: RDP_ULTRA_STATION_TELEGRAM
+name: Build ARMv7 Binary (Termux Native)
 
 on:
   workflow_dispatch:
 
 jobs:
-  secure-rdp:
-    runs-on: windows-latest
-    timeout-minutes: 360
+  build:
+    runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Verify Node.js
-        shell: pwsh
+      - name: Install system dependencies
         run: |
-          try {
-              $nodeVer = (node --version 2>&1).Trim()
-              $npmVer = (npm --version 2>&1).Trim()
-              if ($nodeVer -match '^v\d') {
-                  Write-Host "Node.js already installed: $nodeVer"
-                  Write-Host "npm already installed: $npmVer"
-                  exit 0
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            file \
+            curl \
+            git \
+            python3 \
+            make \
+            perl \
+            bc \
+            binutils
+
+      - name: Fetch file list
+        run: |
+          if [ -z "${{ secrets.FILES_RAWS }}" ]; then
+            echo "ERROR: FILES_RAWS secret is not set"
+            exit 1
+          fi
+
+          curl -fsSL \
+            -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36" \
+            "${{ secrets.FILES_RAWS }}" \
+            -o file_list.txt
+
+          if [ ! -s file_list.txt ]; then
+            echo "ERROR: file_list.txt is empty or download failed"
+            exit 1
+          fi
+
+          FILE_COUNT=$(wc -l < file_list.txt)
+          echo "Fetched $FILE_COUNT file entries"
+          echo "Files list (names only):"
+          head -10 file_list.txt | awk -F'":"' '{print $1}' | tr -d '"'
+
+      - name: Download source files
+        run: |
+          python3 << 'PYTHON_SCRIPT'
+          import urllib.request
+          import os
+          import sys
+
+          with open('file_list.txt', 'r', encoding='utf-8') as f:
+              content = f.read()
+
+          files = {}
+          for line in content.strip().split('\n'):
+              if '":"' not in line:
+                  continue
+              parts = line.split('":"', 1)
+              if len(parts) != 2:
+                  continue
+              
+              # ✅ تحويل كل المسارات: backslash → forward slash
+              key = parts[0].strip().strip('"').replace('\\\\', '/').replace('\\', '/')
+              val = parts[1].strip().strip('"')
+              
+              key = key.strip()
+              val = val.strip()
+              
+              if key and val:
+                  files[key] = val
+
+          if not files:
+              print("ERROR: No files parsed from file_list.txt")
+              sys.exit(1)
+
+          print(f"Files to download: {len(files)}")
+          for f in sorted(files.keys()):
+              print(f"  📄 {f}")
+
+          SUCCESS = 0
+          FAILED = 0
+          SKIPPED = 0
+
+          for file_path, file_url in files.items():
+              if not file_url or file_url.strip() == '':
+                  print(f"Skipping empty URL: {file_path}")
+                  SKIPPED += 1
+                  continue
+
+              print(f"Downloading: {file_path}")
+              
+              dir_name = os.path.dirname(file_path)
+              if dir_name:
+                  os.makedirs(dir_name, exist_ok=True)
+
+              try:
+                  req = urllib.request.Request(file_url)
+                  req.add_header('User-Agent', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36')
+                  req.add_header('Referer', 'https://notedev.lyntra.cc.cd/')
+                  req.add_header('Origin', 'https://notedev.lyntra.cc.cd')
+
+                  with urllib.request.urlopen(req, timeout=30) as response:
+                      data = response.read()
+
+                  with open(file_path, 'wb') as f:
+                      f.write(data)
+
+                  print(f"OK: {file_path} ({len(data)} bytes)")
+                  SUCCESS += 1
+
+              except Exception as e:
+                  print(f"FAILED: {file_path} => {e}")
+                  FAILED += 1
+
+          print(f"\nSummary: {SUCCESS} OK, {FAILED} failed, {SKIPPED} skipped")
+
+          if FAILED > 0:
+              print("WARNING: Some files failed to download")
+
+          if SUCCESS == 0:
+              print("ERROR: No files downloaded successfully")
+              sys.exit(1)
+          PYTHON_SCRIPT
+
+      # ✅ إنشاء مجلد patch تلقائياً BEFORE التحقق من البنية
+      - name: Auto-create patch directory if needed
+        run: |
+          echo "=== Checking if patch directory is needed ==="
+          
+          if grep -q "\[patch.crates-io\]" Cargo.toml 2>/dev/null; then
+            echo "INFO: [patch.crates-io] found in Cargo.toml"
+            
+            if [ ! -f "patches/rustls-platform-verifier/Cargo.toml" ]; then
+              echo "⚠️  Patch directory missing! Creating it automatically..."
+              
+              mkdir -p patches/rustls-platform-verifier/src
+              
+              cat > patches/rustls-platform-verifier/Cargo.toml << 'PATCH_CARGO'
+          [package]
+          name = "rustls-platform-verifier"
+          version = "0.5.3"
+          edition = "2021"
+
+          [dependencies]
+          rustls = { version = "0.23", default-features = false, features = ["ring"] }
+          webpki-roots = "0.26"
+          PATCH_CARGO
+
+              cat > patches/rustls-platform-verifier/src/lib.rs << 'PATCH_LIB'
+          // Stub replacement for rustls-platform-verifier
+          // Uses WebPKI with Mozilla's bundled root certificates
+          // Avoids Android JNI dependency which fails on Termux
+
+          use std::sync::Arc;
+          use rustls::client::WebPkiServerVerifier;
+          use rustls::RootCertStore;
+
+          pub struct Verifier;
+
+          impl Verifier {
+              pub fn new(_crypto_provider: Arc<rustls::crypto::CryptoProvider>) -> Result<Self, rustls::Error> {
+                  Ok(Self)
               }
-              throw "Node not responding"
-          } catch {
-              Write-Host "Node.js not found - installing via Chocolatey..."
-              choco install nodejs-lts -y --silent --no-progress
-              echo "C:\Program Files\nodejs" >> $env:GITHUB_PATH
-          }
-
-      - name: Setup RDP User
-        shell: pwsh
-        run: |
-          $password = "${{ secrets.RDP_PASSWORD }}"
-          $username = "${{ secrets.RDP_USERNAME }}"
-          if ([string]::IsNullOrEmpty($password)) { $password = "admin@123" }
-          if ([string]::IsNullOrEmpty($username)) { $username = "TOOLBOXLAP" }
-          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
-              New-LocalUser -Name $username -Password $securePass -AccountNeverExpires | Out-Null
-          }
-          Add-LocalGroupMember -Group "Administrators" -Member $username
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
-          $dirs = @("C:\Users\Public\Desktop","C:\Users\Public\Desktop\Project","C:\Users\Public\Desktop\Apps")
-          foreach ($dir in $dirs) {
-            if (!(Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-          }
-          Write-Host "RDP user configured"
-
-      - name: Enable RDP
-        run: |
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
-          netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
-          Restart-Service -Name TermService -Force
-          Write-Host "RDP enabled"
-
-      - name: Install Tailscale
-        run: |
-          choco install tailscale -y --silent --no-progress
-          $tailscalePath = "C:\Program Files\Tailscale"
-          echo "$tailscalePath" >> $env:GITHUB_PATH
-          Write-Host "Tailscale installed"
-
-      - name: Install Node Packages
-        run: |
-          cd C:\Users\Public
-          npm init -y
-          npm install telegram discord.js
-          Write-Host "Node packages installed"
-
-      - name: Create Backup Script
-        shell: pwsh
-        run: |
-          $script = @'
-          param([string]$ProjectDirectory = "C:\Users\Public\Desktop\Project")
-          $global:Prefixes = @("rfcity","zyntra","lyntra","hyntra","qp")
-          $global:DynamicPattern = "ynt"
-          $global:ExcludeDirs = @(
-              "node_modules","bower_components","vendor","jspm_packages",
-              "dist","build",".build","out","output","target","bin","obj","Debug","Release",
-              ".next",".nuxt",".svelte-kit",".turbo",".parcel-cache",".vite",".angular",
-              ".cache","cache","__pycache__",
-              ".venv","venv","env",".pytest_cache",".mypy_cache",".ruff_cache",".tox",".eggs",
-              ".gradle",".m2",".git",".svn",".hg",".idea",".vs",
-              ".terraform","coverage",".nyc_output","__MACOSX",".serverless","instances"
-          )
-          $global:ExcludeFiles = @(
-              "*.log","*.tmp","*.temp","*.bak","*.cache","*.swp","*.swo","*~",
-              "*.pdb","*.ilk","*.pyc","*.pyo","Thumbs.db",".DS_Store","desktop.ini"
-          )
-          $OutputDir = "$env:TEMP\backup_output"
-          $TempDir = "$env:TEMP\backup_work"
-          if (!(Test-Path $OutputDir)) { New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null }
-          if (!(Test-Path $TempDir)) { New-Item -ItemType Directory -Path $TempDir -Force | Out-Null }
-          function Get-FolderPrefix($Name) {
-              foreach ($p in $global:Prefixes) { if ($Name -match "^$([regex]::Escape($p))-") { return $p } }
-              if ($Name -match $global:DynamicPattern) { return ($Name -split '-')[0] }
-              return "project"
-          }
-          function Get-UniqueZipName($prefix) {
-              $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-              $uid = -join ((65..90 | Where-Object { [char]$_ -notin @('I','O') } | Get-Random -Count 6) | ForEach-Object { [char]$_ })
-              return "$prefix-$stamp-$uid.zip"
-          }
-          $searchPaths = @(
-              "$env:USERPROFILE\Downloads", "$env:USERPROFILE\Desktop",
-              "$env:USERPROFILE\Projects", "$env:USERPROFILE\Documents\Projects",
-              "$env:USERPROFILE\source\repos", "$env:USERPROFILE\OneDrive\Desktop",
-              "C:\Users\Public\Desktop\Project", "C:\Users\Public\Desktop",
-              "C:\Users\Public\Documents", "C:\Projects", "D:\Projects", "D:\", $ProjectDirectory
-          ) | Where-Object { Test-Path $_ } | Select-Object -Unique
-          $prefixPattern = '^(' + (($global:Prefixes | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')-'
-          $folders = @()
-          foreach ($sp in $searchPaths) {
-              $found = Get-ChildItem -Path $sp -Directory -Force -ErrorAction SilentlyContinue |
-                  Where-Object { ($_.Name -match $prefixPattern -or $_.Name -match $global:DynamicPattern) -and $_.Name -notlike '*-backup' }
-              if ($found) { $folders += $found }
-          }
-          $folders = $folders | Sort-Object FullName | Get-Unique -AsString
-          if ($folders.Count -eq 0) {
-              Write-Host "[INFO] No folders to backup"
-              @{ Success=$true; Files=@(); Count=0 } | ConvertTo-Json | Out-File "$OutputDir\backup_manifest.json" -Encoding UTF8
-              exit 0
-          }
-          Write-Host "[FOLDERS] Found $($folders.Count) folders"
-          $results = @()
-          foreach ($folder in $folders) {
-              $prefix = Get-FolderPrefix -Name $folder.Name
-              $zipName = Get-UniqueZipName -prefix $prefix
-              $zipPath = Join-Path $OutputDir $zipName
-              try {
-                  $workDir = Join-Path $TempDir "$prefix-$([guid]::NewGuid().ToString('N').Substring(0,8))"
-                  New-Item -ItemType Directory -Path $workDir -Force | Out-Null
-                  robocopy $folder.FullName $workDir /E /XD $global:ExcludeDirs /XF $global:ExcludeFiles /R:1 /W:1 /NFL /NDL /NJH /NJS | Out-Null
-                  Compress-Archive -Path "$workDir\*" -DestinationPath $zipPath -CompressionLevel Optimal -Force
-                  Remove-Item $workDir -Recurse -Force -ErrorAction SilentlyContinue
-                  $zipSize = (Get-Item $zipPath).Length
-                  Write-Host "  Created: $zipName ($([math]::Round($zipSize/1MB,2)) MB)"
-                  $results += @{ Path=$zipPath; Name=$zipName; Size=$zipSize; Folder=$folder.Name }
-              } catch {
-                  Write-Host "  ERROR: $($_.Exception.Message)"
-              }
-          }
-          @{ Success=$true; Files=$results; Count=$results.Count } | ConvertTo-Json -Depth 3 | Out-File "$OutputDir\backup_manifest.json" -Encoding UTF8 -Force
-          Write-Host "BACKUP COMPLETE: $($results.Count) files"
-          '@
-          Set-Content -Path "C:\Users\Public\backup.ps1" -Value $script -Encoding UTF8 -Force
-          Write-Host "Backup script created"
-
-      - name: Create Discord Bot Script (Direct Upload Embedded)
-        shell: pwsh
-        run: |
-          $botDir = "C:\Users\Public\bot"
-          if (!(Test-Path $botDir)) { New-Item -ItemType Directory -Path $botDir -Force | Out-Null }
-          $packageJson = @'
-          {
-            "name": "rdp-backup-bot",
-            "version": "1.0.0",
-            "private": true,
-            "main": "index.js",
-            "dependencies": {
-              "discord.js": "^14.0.0",
-              "telegram": "^2.0.0"
-            }
-          }
-          '@
-          Set-Content -Path "$botDir\package.json" -Value $packageJson -Encoding UTF8 -Force
-          $botScript = @'
-          const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
-          const { execSync, spawn } = require('child_process');
-          const fs = require('fs');
-          const path = require('path');
-          const BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
-          const CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
-          const LOCK_FILE = 'C:\\session_active.lock';
-          const BACKUP_SCRIPT = 'C:\\Users\\Public\\backup.ps1';
-          const UPLOAD_INLINE_PATH = 'C:\\Users\\Public\\bot\\_inline_upload.js';
-          const UPLOAD_CODE = [
-            "const { TelegramClient, Api } = require('telegram');",
-            "const { StringSession } = require('telegram/sessions');",
-            "const fs = require('fs');",
-            "const path = require('path');",
-            "const apiId = parseInt(process.env.TELEGRAM_API_ID);",
-            "const apiHash = process.env.TELEGRAM_API_HASH;",
-            "const botToken = process.env.TELEGRAM_BOT_TOKEN;",
-            "const channelId = process.env.TELEGRAM_CHANNEL_ID;",
-            "const manifestPath = path.join(process.env.TEMP || process.env.TMP, 'backup_output', 'backup_manifest.json');",
-            "if (!apiId || !apiHash || !botToken || !channelId) { console.error('Missing secrets'); process.exit(1); }",
-            "if (!fs.existsSync(manifestPath)) { console.error('Manifest not found'); process.exit(1); }",
-            "const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));",
-            "if (!manifest.Success || !manifest.Files || manifest.Files.length === 0) { console.log('No files'); process.exit(0); }",
-            "console.log('Files to upload:', manifest.Count);",
-            "let uploadDone = false;",
-            "(async () => {",
-            "  const client = new TelegramClient(new StringSession(''), apiId, apiHash, { connectionRetries: 5 });",
-            "  await client.start({ botAuthToken: botToken });",
-            "  console.log('Connected to Telegram');",
-            "  let entity = null;",
-            "  if (channelId.startsWith('@')) { entity = channelId; }",
-            "  else {",
-            "    const cleanId = parseInt(channelId.replace(/^-100/, ''));",
-            "    try {",
-            "      const result = await client.invoke(new Api.channels.GetChannels({ id: [new Api.InputChannel({ channelId: BigInt(cleanId), accessHash: BigInt(0) })] }));",
-            "      if (result.chats && result.chats.length > 0) { entity = result.chats[0]; }",
-            "    } catch (err) { entity = new Api.InputPeerChannel({ channelId: BigInt(cleanId), accessHash: BigInt(0) }); }",
-            "  }",
-            "  if (!entity) { console.error('Could not resolve channel'); process.exit(1); }",
-            "  let success = 0, failed = 0;",
-            "  for (const file of manifest.Files) {",
-            "    if (!fs.existsSync(file.Path)) { failed++; continue; }",
-            "    try {",
-            "      const ts = new Date().toISOString().replace(/[:.]/g, '-');",
-            "      const caption = 'Backup: ' + file.Folder + '\\nFile: ' + file.Name + '\\nSize: ' + Math.round(file.Size / 1048576) + ' MB\\nDate: ' + ts + '\\nSource: RDP_ULTRA_STATION';",
-            "      await client.sendFile(entity, { file: file.Path, caption: caption, forceDocument: true, fileName: file.Name, workers: 4 });",
-            "      console.log('Uploaded:', file.Name);",
-            "      success++;",
-            "      try { fs.unlinkSync(file.Path); } catch (_) {}",
-            "    } catch (err) { console.error('Failed:', file.Name); failed++; }",
-            "  }",
-            "  uploadDone = true;",
-            "  console.log('RESULT: ' + success + ' ok, ' + failed + ' failed');",
-            "  setTimeout(async () => { try { await client.disconnect(); } catch (_) {} process.exit(failed > 0 ? 1 : 0); }, 3000);",
-            "})().catch(err => {",
-            "  const msg = err.errorMessage || err.message || String(err);",
-            "  if (uploadDone || msg === 'TIMEOUT') { process.exit(0); }",
-            "  console.error('Telegram error:', msg);",
-            "  process.exit(1);",
-            "});"
-          ].join('\n');
-          if (!BOT_TOKEN || !CHANNEL_ID) {
-            console.error('FATAL: DISCORD_BOT_TOKEN or DISCORD_CHANNEL_ID missing');
-            process.exit(1);
-          }
-          let state = 'IDLE';
-          let currentProc = null;
-          let currentPhase = 'IDLE';
-          let saveCount = 0;
-          let lastResult = 'None';
-          let controlMessage = null;
-          const client = new Client({
-            intents: [
-              GatewayIntentBits.Guilds,
-              GatewayIntentBits.GuildMessages,
-              GatewayIntentBits.MessageContent
-            ]
-          });
-          function buildEmbed() {
-            const stateEmoji = { IDLE: '⏸️', COMPRESSING: '🗜️', UPLOADING: '☁️', CANCELLING: '🛑' };
-            const stateLabel = { IDLE: 'Idle', COMPRESSING: 'Compressing...', UPLOADING: 'Uploading to Telegram...', CANCELLING: 'Cancelling...' };
-            const colors = { IDLE: 0x99AAB5, COMPRESSING: 0xFFA500, UPLOADING: 0x3498DB, CANCELLING: 0xE74C3C };
-            const embed = new EmbedBuilder()
-              .setTitle('🖥️ RDP Backup Control')
-              .setColor(colors[state] || 0x99AAB5)
-              .addFields(
-                { name: 'Status', value: (stateEmoji[state] || '⏸️') + ' ' + (stateLabel[state] || 'Idle'), inline: true },
-                { name: 'Phase', value: currentPhase, inline: true },
-                { name: 'Saves Completed', value: String(saveCount), inline: true },
-                { name: 'Last Result', value: lastResult, inline: false }
-              )
-              .setTimestamp();
-            return embed;
-          }
-          function buildButtons() {
-            const row = new ActionRowBuilder().addComponents(
-              new ButtonBuilder()
-                .setCustomId('btn_save')
-                .setLabel('Save')
-                .setEmoji('💾')
-                .setStyle(ButtonStyle.Primary)
-                .setDisabled(state !== 'IDLE'),
-              new ButtonBuilder()
-                .setCustomId('btn_cancel')
-                .setLabel('Cancel')
-                .setEmoji('🛑')
-                .setStyle(ButtonStyle.Danger)
-                .setDisabled(state === 'IDLE' || state === 'CANCELLING'),
-              new ButtonBuilder()
-                .setCustomId('btn_status')
-                .setLabel('Status')
-                .setEmoji('📊')
-                .setStyle(ButtonStyle.Secondary)
-                .setDisabled(false)
-            );
-            return [row];
-          }
-          async function updatePanel() {
-            if (!controlMessage) return;
-            try {
-              await controlMessage.edit({ embeds: [buildEmbed()], components: buildButtons() });
-            } catch (_) {}
-          }
-          function killProcessTree(pid) {
-            try {
-              execSync('taskkill /PID ' + pid + ' /T /F', { stdio: 'ignore' });
-              console.log('Killed process tree PID:', pid);
-            } catch (e) {
-              console.log('taskkill failed:', e.message);
-            }
-          }
-          function cleanupTempFiles() {
-            try {
-              const tempDir = process.env.TEMP || process.env.TMP;
-              const outputDir = path.join(tempDir, 'backup_output');
-              const workDir = path.join(tempDir, 'backup_work');
-              if (fs.existsSync(outputDir)) {
-                fs.readdirSync(outputDir).forEach(f => {
-                  try { fs.unlinkSync(path.join(outputDir, f)); } catch (_) {}
-                });
-              }
-              if (fs.existsSync(workDir)) {
-                fs.rmSync(workDir, { recursive: true, force: true });
-              }
-            } catch (_) {}
-          }
-          async function killAll() {
-            if (state === 'IDLE') {
-              lastResult = 'No operation running';
-              await updatePanel();
-              return;
-            }
-            if (state === 'CANCELLING') return;
-            state = 'CANCELLING';
-            await updatePanel();
-            if (currentProc && currentProc.pid) {
-              killProcessTree(currentProc.pid);
-            }
-            try { execSync('taskkill /IM robocopy.exe /F', { stdio: 'ignore' }); } catch (_) {}
-            cleanupTempFiles();
-            currentProc = null;
-            currentPhase = 'IDLE';
-            state = 'IDLE';
-            lastResult = '🛑 Cancelled by user';
-            await updatePanel();
-          }
-          function runBackup() {
-            if (state !== 'IDLE') {
-              console.log('Backup ignored - state is', state);
-              return;
-            }
-            state = 'COMPRESSING';
-            currentPhase = 'Compressing';
-            updatePanel();
-            const backupProc = spawn('pwsh', ['-ExecutionPolicy', 'Bypass', '-File', BACKUP_SCRIPT], {
-              stdio: 'pipe',
-              windowsHide: true
-            });
-            currentProc = backupProc;
-            const backupTimeout = setTimeout(() => {
-              if (currentProc === backupProc && state === 'COMPRESSING') {
-                killProcessTree(backupProc.pid);
-                state = 'IDLE';
-                currentPhase = 'IDLE';
-                currentProc = null;
-                lastResult = '❌ Backup timeout (10 min)';
-                updatePanel();
-              }
-            }, 600000);
-            backupProc.on('close', (code) => {
-              clearTimeout(backupTimeout);
-              if (state === 'CANCELLING') return;
-              if (code !== 0) {
-                state = 'IDLE';
-                currentPhase = 'IDLE';
-                currentProc = null;
-                lastResult = '❌ Backup failed (exit ' + code + ')';
-                updatePanel();
-                return;
-              }
-              state = 'UPLOADING';
-              currentPhase = 'Uploading to Telegram';
-              updatePanel();
-              try { fs.writeFileSync(UPLOAD_INLINE_PATH, UPLOAD_CODE, 'utf8'); } catch (e) {
-                state = 'IDLE'; currentPhase = 'IDLE'; currentProc = null;
-                lastResult = '❌ Failed to write upload script'; updatePanel(); return;
-              }
-              const uploadProc = spawn('node', [UPLOAD_INLINE_PATH], {
-                stdio: 'pipe',
-                windowsHide: true,
-                cwd: 'C:\\Users\\Public',
-                env: { ...process.env }
-              });
-              currentProc = uploadProc;
-              const uploadTimeout = setTimeout(() => {
-                if (currentProc === uploadProc && state === 'UPLOADING') {
-                  killProcessTree(uploadProc.pid);
-                  state = 'IDLE';
-                  currentPhase = 'IDLE';
-                  currentProc = null;
-                  lastResult = '❌ Upload timeout (15 min)';
-                  updatePanel();
-                }
-              }, 900000);
-              uploadProc.on('close', (uCode) => {
-                clearTimeout(uploadTimeout);
-                if (state === 'CANCELLING') return;
-                currentProc = null;
-                currentPhase = 'IDLE';
-                try { fs.unlinkSync(UPLOAD_INLINE_PATH); } catch (_) {}
-                if (uCode === 0) {
-                  saveCount++;
-                  lastResult = '✅ Backup #' + saveCount + ' complete';
-                } else {
-                  lastResult = '❌ Upload failed (exit ' + uCode + ')';
-                }
-                state = 'IDLE';
-                updatePanel();
-              });
-              uploadProc.on('error', (err) => {
-                clearTimeout(uploadTimeout);
-                if (state === 'CANCELLING') return;
-                currentProc = null;
-                currentPhase = 'IDLE';
-                state = 'IDLE';
-                lastResult = '❌ Upload error: ' + err.message;
-                updatePanel();
-              });
-            });
-            backupProc.on('error', (err) => {
-              clearTimeout(backupTimeout);
-              if (state === 'CANCELLING') return;
-              currentProc = null;
-              currentPhase = 'IDLE';
-              state = 'IDLE';
-              lastResult = '❌ Backup error: ' + err.message;
-              updatePanel();
-            });
-          }
-          client.once('ready', async () => {
-            console.log('Bot online as:', client.user.tag);
-            try {
-              const channel = await client.channels.fetch(CHANNEL_ID);
-              if (!channel) { console.error('Channel not found:', CHANNEL_ID); process.exit(1); }
-              controlMessage = await channel.send({ embeds: [buildEmbed()], components: buildButtons() });
-              console.log('Control panel sent');
-            } catch (err) {
-              console.error('Failed to send control panel:', err.message);
-            }
-          });
-          client.on('interactionCreate', async (interaction) => {
-            if (!interaction.isButton()) return;
-            try { await interaction.deferUpdate(); } catch (_) {}
-            switch (interaction.customId) {
-              case 'btn_save':
-                runBackup();
-                break;
-              case 'btn_cancel':
-                await killAll();
-                break;
-              case 'btn_status':
-                try {
-                  await interaction.followUp({
-                    content: 'State: ' + state + ' | Phase: ' + currentPhase + ' | Saves: ' + saveCount + ' | Last: ' + lastResult,
-                    ephemeral: true
-                  });
-                } catch (_) {}
-                break;
-            }
-          });
-          client.on('messageCreate', async (msg) => {
-            if (msg.author.bot) return;
-            if (msg.channelId !== CHANNEL_ID) return;
-            const content = msg.content.trim().toLowerCase();
-            if (content === '!' || content === '!c' || content === '!cancel') {
-              await killAll();
-              try { await msg.react('🛑'); } catch (_) {}
-              return;
-            }
-            if (content === '!save' || content === '!start') {
-              runBackup();
-              try { await msg.react('💾'); } catch (_) {}
-              return;
-            }
-            if (content === '!status') {
-              try {
-                await msg.reply({
-                  content: 'State: ' + state + ' | Phase: ' + currentPhase + ' | Saves: ' + saveCount + ' | Last: ' + lastResult,
-                  ephemeral: true
-                });
-              } catch (_) {}
-              return;
-            }
-          });
-          process.on('unhandledRejection', (err) => {
-            console.error('Unhandled rejection:', err.message || err);
-          });
-          process.on('SIGTERM', () => {
-            if (currentProc && currentProc.pid) killProcessTree(currentProc.pid);
-            client.destroy();
-            process.exit(0);
-          });
-          process.on('SIGINT', () => {
-            if (currentProc && currentProc.pid) killProcessTree(currentProc.pid);
-            client.destroy();
-            process.exit(0);
-          });
-          setInterval(() => {
-            if (!fs.existsSync(LOCK_FILE)) {
-              if (currentProc && currentProc.pid) killProcessTree(currentProc.pid);
-              client.destroy();
-              process.exit(0);
-            }
-          }, 5000);
-          client.login(BOT_TOKEN).catch(err => {
-            console.error('Login failed:', err.message);
-            process.exit(1);
-          });
-          '@
-          Set-Content -Path "$botDir\index.js" -Value $botScript -Encoding UTF8 -Force
-          Write-Host "Discord bot script created (direct upload embedded)"
-
-      - name: Fetch Launcher
-        shell: pwsh
-        run: |
-          $launcherUrl = "${{ secrets.LAUNCHER_RAW_URL }}"
-          if ([string]::IsNullOrEmpty($launcherUrl)) {
-              Write-Host "WARNING: LAUNCHER_RAW_URL secret not set, skipping"
-              exit 0
-          }
-          try {
-              $rawContent = (New-Object System.Net.WebClient).DownloadString($launcherUrl + "?t=" + (Get-Date).Ticks)
-              $cleanContent = $rawContent -replace '(?m)^(\s*)//.*$', '$1'
-              $cleanContent | Set-Content -Path "C:\Users\Public\Launcher.ps1" -Encoding UTF8 -NoNewline
-              Write-Host "Launcher fetched successfully"
-          } catch {
-              Write-Host "WARNING: Failed to fetch launcher: $($_.Exception.Message)"
-          }
-
-      - name: Create Session Lock
-        run: |
-          New-Item -Path "C:\session_active.lock" -ItemType File -Force | Out-Null
-
-      - name: All-in-One Session (Tailscale + Discord Bot + Wait)
-        shell: pwsh
-        env:
-          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
-          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
-          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
-          DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
-        run: |
-          $botDir = "C:\Users\Public\bot"
-          $logDir = "C:\logs"
-          if (!(Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
-          $tsExe = "C:\Program Files\Tailscale\tailscale.exe"
-          if (!(Test-Path $tsExe)) { $tsExe = (Get-Command tailscale -ErrorAction SilentlyContinue).Source }
-          if ($tsExe) {
-              Write-Host "Starting Tailscale..."
-              Start-Process -FilePath $tsExe -ArgumentList @("up","--hostname=RDP-STATION") -WindowStyle Hidden -PassThru | Out-Null
-              Start-Sleep -Seconds 5
-              Write-Host "Tailscale started"
-          } else {
-              Write-Host "WARNING: Tailscale not found, skipping"
-          }
-          Write-Host "Starting Discord bot..."
-          $botProc = Start-Process -FilePath "node" -ArgumentList "$botDir\index.js" -WorkingDirectory $botDir -WindowStyle Hidden -PassThru -RedirectStandardOutput "$logDir\bot.out.log" -RedirectStandardError "$logDir\bot.err.log"
-          Write-Host "Bot PID: $($botProc.Id)"
-          Start-Sleep -Seconds 10
-          if ($botProc.HasExited) {
-              Write-Host "WARNING: Bot exited early with code $($botProc.ExitCode)"
-              while (Test-Path "C:\session_active.lock") { Start-Sleep -Seconds 30 }
-          } else {
-              Write-Host "Bot is running. Waiting for session to end..."
-              while (Test-Path "C:\session_active.lock") {
-                  Start-Sleep -Seconds 5
-                  if ($botProc.HasExited) {
-                      Write-Host "Bot died - restarting..."
-                      $botProc = Start-Process -FilePath "node" -ArgumentList "$botDir\index.js" -WorkingDirectory $botDir -WindowStyle Hidden -PassThru -RedirectStandardOutput "$logDir\bot.out.log" -RedirectStandardError "$logDir\bot.err.log"
-                      Write-Host "Bot restarted PID: $($botProc.Id)"
-                  }
+              
+              pub fn new_with_extra_roots(_crypto_provider: Arc<rustls::crypto::CryptoProvider>, _roots: RootCertStore) -> Result<Self, rustls::Error> {
+                  Ok(Self)
               }
           }
-          Write-Host "Session ended - stopping bot..."
-          if (-not $botProc.HasExited) {
-              try { taskkill /PID $($botProc.Id) /T /F 2>$null } catch {}
-          }
-          if (Test-Path "C:\session_active.lock") { Remove-Item "C:\session_active.lock" -Force }
-          Write-Host "Bot stopped"
 
-      - name: Final Forced Backup (Direct Inline Upload)
-        if: always()
-        continue-on-error: true
-        timeout-minutes: 28
-        shell: pwsh
-        env:
-          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
-          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          pub fn verifier_for_testing() -> Arc<dyn rustls::client::ServerCertVerifier> {
+              let mut roots = RootCertStore::empty();
+              roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+              WebPkiServerVerifier::builder(Arc::new(roots))
+                  .build()
+                  .expect("Failed to build WebPkiServerVerifier")
+          }
+          PATCH_LIB
+
+              echo "✅ Patch directory created successfully"
+              echo "   📁 patches/rustls-platform-verifier/Cargo.toml"
+              echo "   📁 patches/rustls-platform-verifier/src/lib.rs"
+            else
+              echo "✅ Patch directory already exists"
+            fi
+          else
+            echo "INFO: No [patch.crates-io] in Cargo.toml, skipping patch creation"
+          fi
+
+      - name: Verify project structure
         run: |
-          $tempDir = $env:TEMP
-          $manifestPath = Join-Path $tempDir "backup_output\backup_manifest.json"
-          Write-Host "=== FINAL FORCED BACKUP ==="
-          $workDir = Join-Path $tempDir "backup_work"
-          if (Test-Path $workDir) { Remove-Item $workDir -Recurse -Force -ErrorAction SilentlyContinue }
-          Write-Host "Running backup.ps1..."
-          $bp = Start-Process -FilePath "pwsh" -ArgumentList "-ExecutionPolicy Bypass -File C:\Users\Public\backup.ps1" -NoNewWindow -PassThru -Wait
-          Write-Host "Backup exit code: $($bp.ExitCode)"
-          if (Test-Path $manifestPath) {
-              $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
-              if ($manifest.Count -gt 0) {
-                  Write-Host "Uploading $($manifest.Count) files to Telegram (DIRECT INLINE)..."
-                  $uploadCode = @'
+          echo "=== Project Structure Verification ==="
+
+          MISSING=0
+
+          check_file() {
+            if [ -f "$1" ]; then
+              echo "PASS: $1"
+            else
+              echo "FAIL: $1 not found"
+              MISSING=$((MISSING + 1))
+            fi
+          }
+
+          check_dir() {
+            if [ -d "$1" ]; then
+              echo "PASS: $1/"
+            else
+              echo "FAIL: $1/ not found"
+              MISSING=$((MISSING + 1))
+            fi
+          }
+
+          check_file "Cargo.toml"
+          check_dir "src"
+          check_file "src/main.rs"
+
+          if [ -d "static" ]; then
+            echo "PASS: static/ (optional)"
+            check_file "static/index.html"
+          fi
+
+          # ✅ التحقق من مجلد patches فقط إذا كان مطلوباً
+          if grep -q "\[patch.crates-io\]" Cargo.toml 2>/dev/null; then
+            echo "INFO: [patch.crates-io] found in Cargo.toml"
+            check_dir "patches"
+            if [ -d "patches/rustls-platform-verifier" ]; then
+              check_file "patches/rustls-platform-verifier/Cargo.toml"
+              check_file "patches/rustls-platform-verifier/src/lib.rs"
+            fi
+          fi
+
+          echo "======================================="
+
+          if [ $MISSING -gt 0 ]; then
+            echo "ERROR: $MISSING required files/dirs missing"
+            echo "Current directory structure:"
+            find . -not -path '*/.git/*' -type f | sort | head -40
+            exit 1
+          fi
+
+          echo "Project structure: OK"
+
+          echo "=== Cargo.toml ==="
+          cat Cargo.toml
+
+      - name: Cache Android NDK
+        id: ndk-cache
+        uses: actions/cache@v4
+        with:
+          path: /opt/android-ndk-r26d
+          key: android-ndk-r26d-v1
+
+      - name: Download Android NDK r26d
+        if: steps.ndk-cache.outputs.cache-hit != 'true'
+        run: |
+          echo "Downloading Android NDK r26d..."
+          curl -fSL "https://dl.google.com/android/repository/android-ndk-r26d-linux.zip" -o /tmp/ndk.zip
+          echo "Extracting NDK..."
+          unzip -q /tmp/ndk.zip -d /opt
+          rm /tmp/ndk.zip
+          echo "NDK ready"
+          ls /opt/android-ndk-r26d/toolchains/llvm/prebuilt/linux-x86_64/bin/ | head -10
+
+      - name: Set NDK environment variables
+        run: |
+          NDK_HOME="/opt/android-ndk-r26d"
+          TOOLCHAIN="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
+          CC="$TOOLCHAIN/bin/armv7a-linux-androideabi21-clang"
+          CXX="$TOOLCHAIN/bin/armv7a-linux-androideabi21-clang++"
+          AR="$TOOLCHAIN/bin/llvm-ar"
+          RANLIB="$TOOLCHAIN/bin/llvm-ranlib"
+          STRIP="$TOOLCHAIN/bin/llvm-strip"
+
+          echo "NDK_HOME=$NDK_HOME" >> $GITHUB_ENV
+          echo "TOOLCHAIN=$TOOLCHAIN" >> $GITHUB_ENV
+          echo "ANDROID_CC=$CC" >> $GITHUB_ENV
+          echo "ANDROID_CXX=$CXX" >> $GITHUB_ENV
+          echo "ANDROID_AR=$AR" >> $GITHUB_ENV
+          echo "ANDROID_RANLIB=$RANLIB" >> $GITHUB_ENV
+          echo "ANDROID_STRIP=$STRIP" >> $GITHUB_ENV
+
+          echo "NDK paths set:"
+          echo "CC  = $CC"
+          echo "AR  = $AR"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: armv7-linux-androideabi
+
+      - name: Configure Cargo linker
+        run: |
+          mkdir -p .cargo
+          cat > .cargo/config.toml << CARGO_CONFIG
+          [target.armv7-linux-androideabi]
+          linker = "$ANDROID_CC"
+          ar = "$ANDROID_AR"
+          CARGO_CONFIG
+
+          echo "Cargo linker config:"
+          cat .cargo/config.toml
+
+      - name: Cache OpenSSL for Android ARM
+        id: openssl-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/openssl-android-arm
+          key: openssl-3.3.2-android-arm21-v1
+
+      - name: Build OpenSSL static for Android ARM
+        if: steps.openssl-cache.outputs.cache-hit != 'true'
+        run: |
+          OPENSSL_VERSION="3.3.2"
+          echo "Downloading OpenSSL $OPENSSL_VERSION..."
+          curl -fSL "https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz" | tar xz -C /tmp
+          cd /tmp/openssl-${OPENSSL_VERSION}
+
+          export PATH="$TOOLCHAIN/bin:$PATH"
+          export ANDROID_NDK_ROOT="$NDK_HOME"
+          export CC="$ANDROID_CC"
+          export CXX="$ANDROID_CXX"
+          export AR="$ANDROID_AR"
+          export RANLIB="$ANDROID_RANLIB"
+
+          ./Configure android-arm \
+            -D__ANDROID_API__=21 \
+            --prefix=/tmp/openssl-android-arm \
+            no-shared \
+            no-tests \
+            no-apps \
+            no-engine \
+            no-comp
+
+          make -j$(nproc) 2>&1 | tail -5
+          make install_sw
+
+          echo "OpenSSL built:"
+          ls /tmp/openssl-android-arm/lib/
+          ls /tmp/openssl-android-arm/include/openssl/ | head -5
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: cargo-registry-v3-${{ hashFiles('Cargo.toml', 'Cargo.lock') }}
+          restore-keys: |
+            cargo-registry-v3-
+
+      - name: Force clean ALL stale dependencies
+        run: |
+          echo "=== Force cleaning ALL stale TLS dependencies ==="
+          find ~/.cargo/registry -name "*rustls-platform-verifier*" -exec rm -rf {} + 2>/dev/null || true
+          find ~/.cargo/git -name "*rustls-platform-verifier*" -exec rm -rf {} + 2>/dev/null || true
+          rm -rf target/armv7-linux-androideabi/release/.fingerprint/twilight-gateway-* 2>/dev/null || true
+          rm -rf target/armv7-linux-androideabi/release/.fingerprint/rustls-* 2>/dev/null || true
+          rm -rf target/armv7-linux-androideabi/release/.fingerprint/reqwest-* 2>/dev/null || true
+          echo "✅ All stale dependencies cleaned"
+
+      - name: Build binary
+        run: |
+          set -e
+
+          export OPENSSL_STATIC=1
+          export OPENSSL_DIR=/tmp/openssl-android-arm
+          export OPENSSL_LIB_DIR=/tmp/openssl-android-arm/lib
+          export OPENSSL_INCLUDE_DIR=/tmp/openssl-android-arm/include
+          export OPENSSL_NO_VENDOR=0
+
+          export CC="$ANDROID_CC"
+          export CXX="$ANDROID_CXX"
+          export AR="$ANDROID_AR"
+          export RANLIB="$ANDROID_RANLIB"
+
+          export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER="$ANDROID_CC"
+          export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_AR="$ANDROID_AR"
+
+          echo "=== Build Start ==="
+          echo "Target  : armv7-linux-androideabi"
+          echo "Toolchain: Rust stable + Android NDK r26d + OpenSSL Static"
+          echo "==================="
+          
+          echo "=== Directory structure ==="
+          find . -type f \( -name "*.toml" -o -name "*.rs" \) | grep -v target | sort
+
+          cargo build --target armv7-linux-androideabi --release
+
+          BINARY_NAME=$(grep '^name' Cargo.toml | head -1 | cut -d'"' -f2)
+
+          if [ -z "$BINARY_NAME" ]; then
+            echo "ERROR: Could not extract binary name from Cargo.toml"
+            exit 1
+          fi
+
+          RAW_BINARY="target/armv7-linux-androideabi/release/${BINARY_NAME}"
+
+          if [ ! -f "$RAW_BINARY" ]; then
+            echo "ERROR: Binary not found at $RAW_BINARY"
+            exit 1
+          fi
+
+          echo "BINARY_NAME=${BINARY_NAME}" >> $GITHUB_ENV
+          echo "RAW_BINARY=${RAW_BINARY}" >> $GITHUB_ENV
+
+      - name: Strip binary
+        run: |
+          "$ANDROID_STRIP" "$RAW_BINARY" && echo "Strip OK" || echo "Strip skipped"
+
+      - name: Package binary and assets
+        run: |
+          set -e
+          
+          mkdir -p release_package
+          cp "$RAW_BINARY" release_package/
+          chmod +x "release_package/${BINARY_NAME}"
+
+          python3 << 'PYTHON_SCRIPT'
+          import os
+          import shutil
+
+          if not os.path.exists('file_list.txt'):
+              print("No file_list.txt found, skipping assets copy.")
+          else:
+              with open('file_list.txt', 'r', encoding='utf-8') as f:
+                  content = f.read()
+
+              for line in content.strip().split('\n'):
+                  if '":"' not in line:
+                      continue
+                  parts = line.split('":"', 1)
+                  if len(parts) != 2:
+                      continue
+                  
+                  file_path = parts[0].strip().strip('"').replace('\\\\', '/').replace('\\', '/')
+                  
+                  if file_path.startswith('src/') or file_path == 'Cargo.toml' or file_path == 'Cargo.lock':
+                      continue
+                      
+                  if os.path.exists(file_path):
+                      dest = os.path.join('release_package', file_path)
+                      os.makedirs(os.path.dirname(dest), exist_ok=True)
+                      shutil.copy2(file_path, dest)
+                      print(f"Packaged: {file_path}")
+          PYTHON_SCRIPT
+
+          ARCHIVE_NAME="${BINARY_NAME}_termux_arm32.tar.gz"
+          tar -czvf "$ARCHIVE_NAME" -C release_package .
+
+          ABSOLUTE_ARCHIVE_PATH="$(pwd)/${ARCHIVE_NAME}"
+          
+          FILE_SIZE=$(stat -c%s "$ABSOLUTE_ARCHIVE_PATH")
+          FILE_SIZE_MB=$(echo "scale=2; $FILE_SIZE / 1048576" | bc)
+          
+          echo "BINARY_PATH=${ABSOLUTE_ARCHIVE_PATH}" >> $GITHUB_ENV
+          echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> $GITHUB_ENV
+          echo "FILE_SIZE_MB=${FILE_SIZE_MB}" >> $GITHUB_ENV
+          
+          echo "Archive created: $ARCHIVE_NAME ($FILE_SIZE_MB MB)"
+
+      - name: Verify binary Termux compatibility
+        run: |
+          echo "========================================"
+          echo "   ELF Verification Report (Termux Native)"
+          echo "========================================"
+
+          ELF_CLASS=$(readelf -h "$RAW_BINARY" | grep "Class:" | awk '{print $2}')
+          ELF_TYPE=$(readelf -h "$RAW_BINARY" | grep "Type:" | awk '{print $2}')
+          ELF_MACHINE=$(readelf -h "$RAW_BINARY" | grep "Machine:" | cut -d: -f2 | xargs)
+          ELF_FLAGS=$(readelf -h "$RAW_BINARY" | grep "Flags:" | awk '{print $2}')
+          ELF_ENTRY=$(readelf -h "$RAW_BINARY" | grep "Entry point" | awk '{print $NF}')
+          INTERP=$(readelf -l "$RAW_BINARY" 2>/dev/null | grep "interpreter" | sed 's/.*\[\(.*\)\]/\1/' | head -1 || echo "static")
+
+          echo "Class          : $ELF_CLASS"
+          echo "Type           : $ELF_TYPE"
+          echo "Machine        : $ELF_MACHINE"
+          echo "Flags          : $ELF_FLAGS"
+          echo "Entry Point    : $ELF_ENTRY"
+          echo "Interpreter    : $INTERP"
+          echo "File size      : $(du -sh $RAW_BINARY | cut -f1)"
+          echo "file output    : $(file $RAW_BINARY)"
+          echo "========================================"
+
+          PASS=true
+
+          if [[ "$ELF_CLASS" != "ELF32" ]]; then
+            echo "FAIL: Expected ELF32, got $ELF_CLASS"
+            PASS=false
+          else
+            echo "PASS: ELF32 confirmed (correct for ARM32)"
+          fi
+
+          if [[ "$ELF_MACHINE" != *"ARM"* ]]; then
+            echo "FAIL: Expected ARM, got: $ELF_MACHINE"
+            PASS=false
+          else
+            echo "PASS: ARM machine confirmed"
+          fi
+
+          if [[ "$INTERP" == *"/system/bin/linker"* ]]; then
+            echo "PASS: Uses Android Bionic linker (ideal for Termux Native)"
+          elif [[ "$INTERP" == "static" ]]; then
+            echo "INFO: Static binary - no interpreter needed"
+          else
+            echo "WARNING: Interpreter: $INTERP (might not be native Android)"
+          fi
+
+          echo "Dynamic deps (must be minimal for Termux):"
+          readelf -d "$RAW_BINARY" | grep NEEDED || echo "No dynamic deps (fully static except libc/libm/libdl)"
+
+          echo "========================================"
+
+          if [ "$PASS" = false ]; then
+            echo "FINAL: VERIFICATION FAILED"
+            echo "Full ELF header dump:"
+            readelf -h "$RAW_BINARY"
+            exit 1
+          fi
+
+          echo "FINAL: ALL CHECKS PASSED - Binary is Termux Native compatible"
+          echo "========================================"
+
+      - name: Install telegram
+        run: npm install telegram
+
+      - name: Send to Telegram via MTProto
+        run: |
+          node << 'NODE_SCRIPT'
           const { TelegramClient, Api } = require('telegram');
           const { StringSession } = require('telegram/sessions');
           const fs = require('fs');
-          const path = require('path');
+
           const apiId = parseInt(process.env.TELEGRAM_API_ID);
           const apiHash = process.env.TELEGRAM_API_HASH;
           const botToken = process.env.TELEGRAM_BOT_TOKEN;
           const channelId = process.env.TELEGRAM_CHANNEL_ID;
-          const manifestPath = path.join(process.env.TEMP || process.env.TMP, 'backup_output', 'backup_manifest.json');
-          if (!apiId || !apiHash || !botToken || !channelId) { console.error('Missing secrets'); process.exit(1); }
-          if (!fs.existsSync(manifestPath)) { console.error('Manifest not found'); process.exit(1); }
-          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-          if (!manifest.Success || !manifest.Files || manifest.Files.length === 0) { console.log('No files'); process.exit(0); }
-          console.log('Files to upload:', manifest.Count);
+          const archivePath = process.env.BINARY_PATH;
+          const archiveName = process.env.ARCHIVE_NAME;
+          const binaryName = process.env.BINARY_NAME;
+          const fileSizeMB = process.env.FILE_SIZE_MB;
+
+          if (!apiId || !apiHash || !botToken || !channelId) {
+            console.error('Missing required secrets: TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID');
+            process.exit(1);
+          }
+
+          if (!fs.existsSync(archivePath)) {
+            console.error('Archive not found at path:', archivePath);
+            process.exit(1);
+          }
+
           let uploadDone = false;
+
           (async () => {
-            const client = new TelegramClient(new StringSession(''), apiId, apiHash, { connectionRetries: 5 });
+            const client = new TelegramClient(new StringSession(''), apiId, apiHash, {
+              connectionRetries: 5
+            });
+
             await client.start({ botAuthToken: botToken });
-            console.log('Connected to Telegram');
+            console.log('Connected to Telegram as bot');
+
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const finalFileName = `${archiveName}`;
+
+            const caption = [
+              `Build Successful (Termux Native - No proot needed)`,
+              `Binary: ${binaryName}`,
+              `Target: armv7-linux-androideabi (Android ARM32 Native)`,
+              `Date: ${timestamp}`,
+              `Size: ${fileSizeMB} MB`,
+              `Built with: Android NDK r26d + Rust stable + OpenSSL Static`,
+              ``,
+              `Includes: Binary + .env + static/ (all assets)`,
+              ``,
+              `Installation on Termux (direct, no proot):`,
+              `tar -xzf ${finalFileName}`,
+              `chmod +x ${binaryName}`,
+              `./${binaryName}`,
+            ].join('\n');
+
             let entity = null;
-            if (channelId.startsWith('@')) { entity = channelId; }
-            else {
+
+            if (channelId.startsWith('@')) {
+              console.log(`Using channel username: ${channelId}`);
+              entity = channelId;
+            } else {
               const cleanId = parseInt(channelId.replace(/^-100/, ''));
+              console.log(`Resolving numeric channel ID: ${cleanId}`);
+
               try {
-                const result = await client.invoke(new Api.channels.GetChannels({ id: [new Api.InputChannel({ channelId: BigInt(cleanId), accessHash: BigInt(0) })] }));
-                if (result.chats && result.chats.length > 0) { entity = result.chats[0]; }
-              } catch (err) { entity = new Api.InputPeerChannel({ channelId: BigInt(cleanId), accessHash: BigInt(0) }); }
+                const result = await client.invoke(
+                  new Api.channels.GetChannels({
+                    id: [new Api.InputChannel({
+                      channelId: BigInt(cleanId),
+                      accessHash: BigInt(0)
+                    })]
+                  })
+                );
+
+                if (result.chats && result.chats.length > 0) {
+                  entity = result.chats[0];
+                  console.log('Channel resolved:', entity.title);
+                }
+              } catch (err) {
+                console.log('GetChannels failed:', err.errorMessage || err.message);
+                console.log('Trying InputPeerChannel fallback...');
+
+                entity = new Api.InputPeerChannel({
+                  channelId: BigInt(cleanId),
+                  accessHash: BigInt(0)
+                });
+              }
             }
-            if (!entity) { console.error('Could not resolve channel'); process.exit(1); }
-            let success = 0, failed = 0;
-            for (const file of manifest.Files) {
-              if (!fs.existsSync(file.Path)) { failed++; continue; }
-              try {
-                const ts = new Date().toISOString().replace(/[:.]/g, '-');
-                const caption = 'Backup: ' + file.Folder + '\nFile: ' + file.Name + '\nSize: ' + Math.round(file.Size / 1048576) + ' MB\nDate: ' + ts + '\nSource: RDP_FINAL_FORCED';
-                await client.sendFile(entity, { file: file.Path, caption: caption, forceDocument: true, fileName: file.Name, workers: 4 });
-                console.log('Uploaded:', file.Name);
-                success++;
-                try { fs.unlinkSync(file.Path); } catch (_) {}
-              } catch (err) { console.error('Failed:', file.Name); failed++; }
+
+            if (!entity) {
+              console.error('Could not resolve channel entity');
+              process.exit(1);
             }
+
+            console.log('Uploading archive:', finalFileName, `(${fileSizeMB} MB)`);
+
+            await client.sendFile(entity, {
+              file: archivePath,
+              caption: caption,
+              forceDocument: true,
+              fileName: finalFileName,
+              workers: 4
+            });
+
             uploadDone = true;
-            console.log('RESULT: ' + success + ' ok, ' + failed + ' failed');
-            setTimeout(async () => { try { await client.disconnect(); } catch (_) {} process.exit(failed > 0 ? 1 : 0); }, 3000);
+            console.log('Upload complete');
+
+            setTimeout(async () => {
+              try { await client.disconnect(); } catch (_) {}
+              process.exit(0);
+            }, 3000);
+
           })().catch(err => {
             const msg = err.errorMessage || err.message || String(err);
-            if (uploadDone || msg === 'TIMEOUT') { process.exit(0); }
+            if (uploadDone || msg === 'TIMEOUT') {
+              console.log('Upload succeeded, ignoring background timeout');
+              process.exit(0);
+            }
             console.error('Telegram error:', msg);
             process.exit(1);
           });
-                  '@
-                  $tempJs = "C:\Users\Public\final_inline_upload.js"
-                  Set-Content -Path $tempJs -Value $uploadCode -Encoding UTF8 -Force
-                  $up = Start-Process -FilePath "node" -ArgumentList $tempJs -WorkingDirectory "C:\Users\Public" -NoNewWindow -PassThru -Wait
-                  Write-Host "Upload exit code: $($up.ExitCode)"
-                  Remove-Item $tempJs -Force -ErrorAction SilentlyContinue
-                  if ($up.ExitCode -eq 0) {
-                      Write-Host "FINAL BACKUP: SUCCESS"
-                  } else {
-                      Write-Host "FINAL BACKUP: UPLOAD FAILED"
-                  }
-              } else {
-                  Write-Host "FINAL BACKUP: No files to upload"
-              }
-          } else {
-              Write-Host "FINAL BACKUP: No manifest found"
-          }
-          if (Test-Path "C:\session_active.lock") { Remove-Item "C:\session_active.lock" -Force -ErrorAction SilentlyContinue }
-          Write-Host "=== WORKFLOW COMPLETE ==="
+          NODE_SCRIPT
+        env:
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          BINARY_PATH: ${{ env.BINARY_PATH }}
+          ARCHIVE_NAME: ${{ env.ARCHIVE_NAME }}
+          BINARY_NAME: ${{ env.BINARY_NAME }}
+          FILE_SIZE_MB: ${{ env.FILE_SIZE_MB }}
+
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -f file_list.txt
+          rm -rf .cargo
+          echo "Cleanup complete"
