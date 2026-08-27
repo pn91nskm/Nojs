@@ -1,668 +1,416 @@
-name: Build ARMv7 Binary (Termux Native)
+name: RDP_ULTRA_STATION_FINAL_V26
 
 on:
   workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  secure-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 360
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-      - name: Install system dependencies
+      - name: Set Timezone to Saudi Arabia (UTC+3)
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y \
-            file \
-            curl \
-            git \
-            python3 \
-            make \
-            perl \
-            bc \
-            binutils
+          tzutil /s "Arabic Standard Time"
+          Write-Host "✅ تم ضبط التوقيت إلى: $(Get-TimeZone -Id 'Arabic Standard Time').DisplayName"
 
-      - name: Fetch file list
+      - name: Install Tools (Pre-requisites)
         run: |
-          if [ -z "${{ secrets.FILES_RAWS }}" ]; then
-            echo "ERROR: FILES_RAWS secret is not set"
-            exit 1
-          fi
+          choco install rclone tailscale -y --silent --no-progress
+          $tailscalePath = "C:\Program Files\Tailscale"
+          $rclonePath = "C:\Program Files\rclone"
+          echo "$tailscalePath" >> $env:GITHUB_PATH
+          echo "$rclonePath" >> $env:GITHUB_PATH
 
-          curl -fsSL \
-            -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36" \
-            "${{ secrets.FILES_RAWS }}" \
-            -o file_list.txt
-
-          if [ ! -s file_list.txt ]; then
-            echo "ERROR: file_list.txt is empty or download failed"
-            exit 1
-          fi
-
-          FILE_COUNT=$(wc -l < file_list.txt)
-          echo "Fetched $FILE_COUNT file entries"
-          echo "Files list (names only):"
-          head -10 file_list.txt | awk -F'":"' '{print $1}' | tr -d '"'
-
-      - name: Download source files
+      - name: Set Chrome as Official Default Browser
+        shell: pwsh
         run: |
-          python3 << 'PYTHON_SCRIPT'
-          import urllib.request
-          import os
-          import sys
+          $xmlPath = "C:\defaultapps.xml"
+          $chromePath = "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe"
+          if (!(Test-Path $chromePath)) { $chromePath = "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe" }
+          try {
+              if (!(Test-Path $chromePath)) { throw "Chrome غير مثبت" }
+              $xmlContent = @"
+          <?xml version="1.0" encoding="UTF-8"?>
+          <DefaultAssociations>
+            <Association Identifier=".htm" ProgId="ChromeHTML" ApplicationName="Google Chrome" />
+            <Association Identifier=".html" ProgId="ChromeHTML" ApplicationName="Google Chrome" />
+            <Association Identifier="http" ProgId="ChromeHTML" ApplicationName="Google Chrome" />
+            <Association Identifier="https" ProgId="ChromeHTML" ApplicationName="Google Chrome" />
+          </DefaultAssociations>
+          "@
+              $xmlContent | Set-Content -Path $xmlPath -Encoding UTF8 -Force
+              Start-Process dism.exe -ArgumentList "/Online /Import-DefaultAppAssociations:$xmlPath" -Wait -NoNewWindow
+          } catch {}
+          if (Test-Path $xmlPath) { Remove-Item $xmlPath -Force }
 
-          with open('file_list.txt', 'r', encoding='utf-8') as f:
-              content = f.read()
-
-          files = {}
-          for line in content.strip().split('\n'):
-              if '":"' not in line:
-                  continue
-              parts = line.split('":"', 1)
-              if len(parts) != 2:
-                  continue
-              
-              # ✅ تحويل كل المسارات: backslash → forward slash
-              key = parts[0].strip().strip('"').replace('\\\\', '/').replace('\\', '/')
-              val = parts[1].strip().strip('"')
-              
-              key = key.strip()
-              val = val.strip()
-              
-              if key and val:
-                  files[key] = val
-
-          if not files:
-              print("ERROR: No files parsed from file_list.txt")
-              sys.exit(1)
-
-          print(f"Files to download: {len(files)}")
-          for f in sorted(files.keys()):
-              print(f"  📄 {f}")
-
-          SUCCESS = 0
-          FAILED = 0
-          SKIPPED = 0
-
-          for file_path, file_url in files.items():
-              if not file_url or file_url.strip() == '':
-                  print(f"Skipping empty URL: {file_path}")
-                  SKIPPED += 1
-                  continue
-
-              print(f"Downloading: {file_path}")
-              
-              dir_name = os.path.dirname(file_path)
-              if dir_name:
-                  os.makedirs(dir_name, exist_ok=True)
-
-              try:
-                  req = urllib.request.Request(file_url)
-                  req.add_header('User-Agent', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36')
-                  req.add_header('Referer', 'https://notedev.lyntra.cc.cd/')
-                  req.add_header('Origin', 'https://notedev.lyntra.cc.cd')
-
-                  with urllib.request.urlopen(req, timeout=30) as response:
-                      data = response.read()
-
-                  with open(file_path, 'wb') as f:
-                      f.write(data)
-
-                  print(f"OK: {file_path} ({len(data)} bytes)")
-                  SUCCESS += 1
-
-              except Exception as e:
-                  print(f"FAILED: {file_path} => {e}")
-                  FAILED += 1
-
-          print(f"\nSummary: {SUCCESS} OK, {FAILED} failed, {SKIPPED} skipped")
-
-          if FAILED > 0:
-              print("WARNING: Some files failed to download")
-
-          if SUCCESS == 0:
-              print("ERROR: No files downloaded successfully")
-              sys.exit(1)
-          PYTHON_SCRIPT
-
-      # ✅ إنشاء مجلد patch تلقائياً BEFORE التحقق من البنية
-      - name: Auto-create patch directory if needed
+      - name: Force Google & Destroy Yahoo (All Layers)
+        shell: pwsh
         run: |
-          echo "=== Checking if patch directory is needed ==="
-          
-          if grep -q "\[patch.crates-io\]" Cargo.toml 2>/dev/null; then
-            echo "INFO: [patch.crates-io] found in Cargo.toml"
-            
-            if [ ! -f "patches/rustls-platform-verifier/Cargo.toml" ]; then
-              echo "⚠️  Patch directory missing! Creating it automatically..."
-              
-              mkdir -p patches/rustls-platform-verifier/src
-              
-              cat > patches/rustls-platform-verifier/Cargo.toml << 'PATCH_CARGO'
-          [package]
-          name = "rustls-platform-verifier"
-          version = "0.5.3"
-          edition = "2021"
-
-          [dependencies]
-          rustls = { version = "0.23", default-features = false, features = ["ring"] }
-          webpki-roots = "0.26"
-          PATCH_CARGO
-
-              cat > patches/rustls-platform-verifier/src/lib.rs << 'PATCH_LIB'
-          // Stub replacement for rustls-platform-verifier
-          // Uses WebPKI with Mozilla's bundled root certificates
-          // Avoids Android JNI dependency which fails on Termux
-
-          use std::sync::Arc;
-          use rustls::client::WebPkiServerVerifier;
-          use rustls::RootCertStore;
-
-          pub struct Verifier;
-
-          impl Verifier {
-              pub fn new(_crypto_provider: Arc<rustls::crypto::CryptoProvider>) -> Result<Self, rustls::Error> {
-                  Ok(Self)
-              }
-              
-              pub fn new_with_extra_roots(_crypto_provider: Arc<rustls::crypto::CryptoProvider>, _roots: RootCertStore) -> Result<Self, rustls::Error> {
-                  Ok(Self)
+          Get-Process chrome -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+          $pol = "HKLM:\Software\Policies\Google\Chrome"
+          if (!(Test-Path $pol)) { New-Item -Path $pol -Force | Out-Null }
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEnabled"    -Value 1        -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderName"       -Value "Google" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderKeyword"    -Value "google.com" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL"  -Value "https://www.google.com/search?q={searchTerms}" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSuggestURL" -Value "https://www.google.com/complete/search?client=chrome&q={searchTerms}" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderIconURL"    -Value "https://www.google.com/favicon.ico" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderNewTabURL"  -Value "https://www.google.com" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEncodings"  -Value "UTF-8"  -Type String -Force
+          Set-ItemProperty -Path $pol -Name "PasswordManagerEnabled"    -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "BrowserSignin"             -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "AutofillAddressEnabled"    -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "AutofillCreditCardEnabled" -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "DeveloperToolsAvailability"  -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "PromotionalTabsEnabled"       -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "WelcomePageOnOSUpgradeEnabled"-Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "BackgroundModeEnabled"        -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "StartupBoostEnabled"          -Value 0 -Type DWord -Force
+          Write-Host "✅ الطبقة 1: سياسات Chrome + Sync/كلمات المرور"
+          $blockPath = "$pol\ExtensionInstallBlocklist"
+          if (!(Test-Path $blockPath)) { New-Item -Path $blockPath -Force | Out-Null }
+          Set-ItemProperty -Path $blockPath -Name "1" -Value "*" -Type String -Force
+          $typeBlock = "$pol\ExtensionInstallTypeBlocklist"
+          if (!(Test-Path $typeBlock)) { New-Item -Path $typeBlock -Force | Out-Null }
+          Set-ItemProperty -Path $typeBlock -Name "1" -Value "development" -Type String -Force
+          Set-ItemProperty -Path $typeBlock -Name "2" -Value "sideload"    -Type String -Force
+          Write-Host "✅ الطبقة 2: حظر جميع الإضافات + التثبيت الخارجي"
+          $yahooIds = @("cnmdgidklhhnmpphlfmmopmghfjhgkdi","nljkibfhlpcnanjgbnlnbjecgicbjkge","fpmeembnagmagppkgghhfjfdfcah")
+          Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+              $extDir = Join-Path $_.FullName "AppData\Local\Google\Chrome\User Data\Default\Extensions"
+              if (Test-Path $extDir) {
+                  foreach ($yid in $yahooIds) {
+                      $p = Join-Path $extDir $yid
+                      if (Test-Path $p) { Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "  🗑️ extension $yid ($($_.Name))" }
+                  }
               }
           }
-
-          pub fn verifier_for_testing() -> Arc<dyn rustls::client::ServerCertVerifier> {
-              let mut roots = RootCertStore::empty();
-              roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-              WebPkiServerVerifier::builder(Arc::new(roots))
-                  .build()
-                  .expect("Failed to build WebPkiServerVerifier")
+          $uninstallKeys = @("HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*","HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*")
+          foreach ($key in $uninstallKeys) {
+              Get-ItemProperty $key -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like "*Yahoo*" } | ForEach-Object {
+                  if ($_.UninstallString) {
+                      $cmd = $_.UninstallString -replace '/I','/X'
+                      Start-Process cmd -ArgumentList "/c `"$cmd`" /S /quiet /norestart" -Wait -NoNewWindow -ErrorAction SilentlyContinue
+                  }
+              }
           }
-          PATCH_LIB
-
-              echo "✅ Patch directory created successfully"
-              echo "   📁 patches/rustls-platform-verifier/Cargo.toml"
-              echo "   📁 patches/rustls-platform-verifier/src/lib.rs"
-            else
-              echo "✅ Patch directory already exists"
-            fi
-          else
-            echo "INFO: No [patch.crates-io] in Cargo.toml, skipping patch creation"
-          fi
-
-      - name: Verify project structure
-        run: |
-          echo "=== Project Structure Verification ==="
-
-          MISSING=0
-
-          check_file() {
-            if [ -f "$1" ]; then
-              echo "PASS: $1"
-            else
-              echo "FAIL: $1 not found"
-              MISSING=$((MISSING + 1))
-            fi
+          @("HKLM:\SOFTWARE\Yahoo","HKCU:\SOFTWARE\Yahoo","HKLM:\SOFTWARE\WOW6432Node\Yahoo") | ForEach-Object {
+              if (Test-Path $_) { Remove-Item $_ -Recurse -Force -ErrorAction SilentlyContinue }
           }
-
-          check_dir() {
-            if [ -d "$1" ]; then
-              echo "PASS: $1/"
-            else
-              echo "FAIL: $1/ not found"
-              MISSING=$((MISSING + 1))
-            fi
+          Write-Host "✅ الطبقة 3: حذف Yahoo"
+          Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+              $profileDir = Join-Path $_.FullName "AppData\Local\Google\Chrome\User Data\Default"
+              if (Test-Path $profileDir) {
+                  @("Preferences","Secure Preferences") | ForEach-Object {
+                      $fp = Join-Path $profileDir $_
+                      if (Test-Path $fp) { Remove-Item $fp -Force -ErrorAction SilentlyContinue }
+                  }
+              }
+              $userData = Join-Path $_.FullName "AppData\Local\Google\Chrome\User Data"
+              if (!(Test-Path $userData)) { New-Item -Path $userData -ItemType Directory -Force | Out-Null }
+              "" | Set-Content (Join-Path $userData "First Run") -Force
           }
+          Write-Host "✅ الطبقة 4: حذف Preferences + First Run"
+          try {
+              $regKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey("Software\Policies\Google\Chrome",[Microsoft.Win32.RegistryKeyPermissionCheck]::ReadWriteSubTree,[System.Security.AccessControl.RegistryRights]::ChangePermissions)
+              $acl = $regKey.GetAccessControl()
+              $usersRule = New-Object System.Security.AccessControl.RegistryAccessRule("BUILTIN\Users","ReadKey","ContainerInherit,ObjectInherit","None","Allow")
+              $acl.AddAccessRule($usersRule)
+              $regKey.SetAccessControl($acl); $regKey.Close()
+              Write-Host "✅ الطبقة 5: حماية Registry بـ ACLs"
+          } catch { Write-Host "⚠️ تعذر ضبط ACLs: $_" }
+          $watchdogContent = @'
+          $pol = "HKLM:\Software\Policies\Google\Chrome"
+          $cur = Get-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL" -ErrorAction SilentlyContinue
+          if ($cur.DefaultSearchProviderSearchURL -notlike "*google.com*") {
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEnabled"    -Value 1        -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderName"       -Value "Google" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderKeyword"    -Value "google.com" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL"  -Value "https://www.google.com/search?q={searchTerms}" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSuggestURL" -Value "https://www.google.com/complete/search?client=chrome&q={searchTerms}" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderIconURL"    -Value "https://www.google.com/favicon.ico" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderNewTabURL"  -Value "https://www.google.com" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEncodings"  -Value "UTF-8"  -Type String -Force
+          }
+          '@
+          Set-Content -Path "C:\Users\Public\search_watchdog.ps1" -Value $watchdogContent -Encoding UTF8
+          try {
+              $pwshPath = "C:\Program Files\PowerShell\7\pwsh.exe"
+              $action   = New-ScheduledTaskAction -Execute $pwshPath -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File C:\Users\Public\search_watchdog.ps1"
+              $trigger  = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(5) -RepetitionInterval 00:00:30 -RepetitionDuration 06:00:00
+              $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+              Register-ScheduledTask -TaskName "GoogleSearchWatchdog" -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -User "SYSTEM" -Force | Out-Null
+              Write-Host "✅ الطبقة 6: Watchdog مُسجّل (كل 30 ثانية كـ SYSTEM)"
+          } catch { Write-Host "⚠️ تعذر تسجيل Watchdog: $_" }
+          Write-Host "🛡️ اكتمل الدفاع متعدد الطبقات — Google مُجبر + كلمات المرور مفعّلة"
 
-          check_file "Cargo.toml"
-          check_dir "src"
-          check_file "src/main.rs"
-
-          if [ -d "static" ]; then
-            echo "PASS: static/ (optional)"
-            check_file "static/index.html"
-          fi
-
-          # ✅ التحقق من مجلد patches فقط إذا كان مطلوباً
-          if grep -q "\[patch.crates-io\]" Cargo.toml 2>/dev/null; then
-            echo "INFO: [patch.crates-io] found in Cargo.toml"
-            check_dir "patches"
-            if [ -d "patches/rustls-platform-verifier" ]; then
-              check_file "patches/rustls-platform-verifier/Cargo.toml"
-              check_file "patches/rustls-platform-verifier/src/lib.rs"
-            fi
-          fi
-
-          echo "======================================="
-
-          if [ $MISSING -gt 0 ]; then
-            echo "ERROR: $MISSING required files/dirs missing"
-            echo "Current directory structure:"
-            find . -not -path '*/.git/*' -type f | sort | head -40
-            exit 1
-          fi
-
-          echo "Project structure: OK"
-
-          echo "=== Cargo.toml ==="
-          cat Cargo.toml
-
-      - name: Cache Android NDK
-        id: ndk-cache
-        uses: actions/cache@v4
-        with:
-          path: /opt/android-ndk-r26d
-          key: android-ndk-r26d-v1
-
-      - name: Download Android NDK r26d
-        if: steps.ndk-cache.outputs.cache-hit != 'true'
+      - name: Setup Environment & User
         run: |
-          echo "Downloading Android NDK r26d..."
-          curl -fSL "https://dl.google.com/android/repository/android-ndk-r26d-linux.zip" -o /tmp/ndk.zip
-          echo "Extracting NDK..."
-          unzip -q /tmp/ndk.zip -d /opt
-          rm /tmp/ndk.zip
-          echo "NDK ready"
-          ls /opt/android-ndk-r26d/toolchains/llvm/prebuilt/linux-x86_64/bin/ | head -10
-
-      - name: Set NDK environment variables
-        run: |
-          NDK_HOME="/opt/android-ndk-r26d"
-          TOOLCHAIN="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
-          CC="$TOOLCHAIN/bin/armv7a-linux-androideabi21-clang"
-          CXX="$TOOLCHAIN/bin/armv7a-linux-androideabi21-clang++"
-          AR="$TOOLCHAIN/bin/llvm-ar"
-          RANLIB="$TOOLCHAIN/bin/llvm-ranlib"
-          STRIP="$TOOLCHAIN/bin/llvm-strip"
-
-          echo "NDK_HOME=$NDK_HOME" >> $GITHUB_ENV
-          echo "TOOLCHAIN=$TOOLCHAIN" >> $GITHUB_ENV
-          echo "ANDROID_CC=$CC" >> $GITHUB_ENV
-          echo "ANDROID_CXX=$CXX" >> $GITHUB_ENV
-          echo "ANDROID_AR=$AR" >> $GITHUB_ENV
-          echo "ANDROID_RANLIB=$RANLIB" >> $GITHUB_ENV
-          echo "ANDROID_STRIP=$STRIP" >> $GITHUB_ENV
-
-          echo "NDK paths set:"
-          echo "CC  = $CC"
-          echo "AR  = $AR"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: armv7-linux-androideabi
-
-      - name: Configure Cargo linker
-        run: |
-          mkdir -p .cargo
-          cat > .cargo/config.toml << CARGO_CONFIG
-          [target.armv7-linux-androideabi]
-          linker = "$ANDROID_CC"
-          ar = "$ANDROID_AR"
-          CARGO_CONFIG
-
-          echo "Cargo linker config:"
-          cat .cargo/config.toml
-
-      - name: Cache OpenSSL for Android ARM
-        id: openssl-cache
-        uses: actions/cache@v4
-        with:
-          path: /tmp/openssl-android-arm
-          key: openssl-3.3.2-android-arm21-v1
-
-      - name: Build OpenSSL static for Android ARM
-        if: steps.openssl-cache.outputs.cache-hit != 'true'
-        run: |
-          OPENSSL_VERSION="3.3.2"
-          echo "Downloading OpenSSL $OPENSSL_VERSION..."
-          curl -fSL "https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz" | tar xz -C /tmp
-          cd /tmp/openssl-${OPENSSL_VERSION}
-
-          export PATH="$TOOLCHAIN/bin:$PATH"
-          export ANDROID_NDK_ROOT="$NDK_HOME"
-          export CC="$ANDROID_CC"
-          export CXX="$ANDROID_CXX"
-          export AR="$ANDROID_AR"
-          export RANLIB="$ANDROID_RANLIB"
-
-          ./Configure android-arm \
-            -D__ANDROID_API__=21 \
-            --prefix=/tmp/openssl-android-arm \
-            no-shared \
-            no-tests \
-            no-apps \
-            no-engine \
-            no-comp
-
-          make -j$(nproc) 2>&1 | tail -5
-          make install_sw
-
-          echo "OpenSSL built:"
-          ls /tmp/openssl-android-arm/lib/
-          ls /tmp/openssl-android-arm/include/openssl/ | head -5
-
-      - name: Cache Cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-          key: cargo-registry-v3-${{ hashFiles('Cargo.toml', 'Cargo.lock') }}
-          restore-keys: |
-            cargo-registry-v3-
-
-      - name: Force clean ALL stale dependencies
-        run: |
-          echo "=== Force cleaning ALL stale TLS dependencies ==="
-          find ~/.cargo/registry -name "*rustls-platform-verifier*" -exec rm -rf {} + 2>/dev/null || true
-          find ~/.cargo/git -name "*rustls-platform-verifier*" -exec rm -rf {} + 2>/dev/null || true
-          rm -rf target/armv7-linux-androideabi/release/.fingerprint/twilight-gateway-* 2>/dev/null || true
-          rm -rf target/armv7-linux-androideabi/release/.fingerprint/rustls-* 2>/dev/null || true
-          rm -rf target/armv7-linux-androideabi/release/.fingerprint/reqwest-* 2>/dev/null || true
-          echo "✅ All stale dependencies cleaned"
-
-      - name: Build binary
-        run: |
-          set -e
-
-          export OPENSSL_STATIC=1
-          export OPENSSL_DIR=/tmp/openssl-android-arm
-          export OPENSSL_LIB_DIR=/tmp/openssl-android-arm/lib
-          export OPENSSL_INCLUDE_DIR=/tmp/openssl-android-arm/include
-          export OPENSSL_NO_VENDOR=0
-
-          export CC="$ANDROID_CC"
-          export CXX="$ANDROID_CXX"
-          export AR="$ANDROID_AR"
-          export RANLIB="$ANDROID_RANLIB"
-
-          export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER="$ANDROID_CC"
-          export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_AR="$ANDROID_AR"
-
-          echo "=== Build Start ==="
-          echo "Target  : armv7-linux-androideabi"
-          echo "Toolchain: Rust stable + Android NDK r26d + OpenSSL Static"
-          echo "==================="
-          
-          echo "=== Directory structure ==="
-          find . -type f \( -name "*.toml" -o -name "*.rs" \) | grep -v target | sort
-
-          cargo build --target armv7-linux-androideabi --release
-
-          BINARY_NAME=$(grep '^name' Cargo.toml | head -1 | cut -d'"' -f2)
-
-          if [ -z "$BINARY_NAME" ]; then
-            echo "ERROR: Could not extract binary name from Cargo.toml"
-            exit 1
-          fi
-
-          RAW_BINARY="target/armv7-linux-androideabi/release/${BINARY_NAME}"
-
-          if [ ! -f "$RAW_BINARY" ]; then
-            echo "ERROR: Binary not found at $RAW_BINARY"
-            exit 1
-          fi
-
-          echo "BINARY_NAME=${BINARY_NAME}" >> $GITHUB_ENV
-          echo "RAW_BINARY=${RAW_BINARY}" >> $GITHUB_ENV
-
-      - name: Strip binary
-        run: |
-          "$ANDROID_STRIP" "$RAW_BINARY" && echo "Strip OK" || echo "Strip skipped"
-
-      - name: Package binary and assets
-        run: |
-          set -e
-          
-          mkdir -p release_package
-          cp "$RAW_BINARY" release_package/
-          chmod +x "release_package/${BINARY_NAME}"
-
-          python3 << 'PYTHON_SCRIPT'
-          import os
-          import shutil
-
-          if not os.path.exists('file_list.txt'):
-              print("No file_list.txt found, skipping assets copy.")
-          else:
-              with open('file_list.txt', 'r', encoding='utf-8') as f:
-                  content = f.read()
-
-              for line in content.strip().split('\n'):
-                  if '":"' not in line:
-                      continue
-                  parts = line.split('":"', 1)
-                  if len(parts) != 2:
-                      continue
-                  
-                  file_path = parts[0].strip().strip('"').replace('\\\\', '/').replace('\\', '/')
-                  
-                  if file_path.startswith('src/') or file_path == 'Cargo.toml' or file_path == 'Cargo.lock':
-                      continue
-                      
-                  if os.path.exists(file_path):
-                      dest = os.path.join('release_package', file_path)
-                      os.makedirs(os.path.dirname(dest), exist_ok=True)
-                      shutil.copy2(file_path, dest)
-                      print(f"Packaged: {file_path}")
-          PYTHON_SCRIPT
-
-          ARCHIVE_NAME="${BINARY_NAME}_termux_arm32.tar.gz"
-          tar -czvf "$ARCHIVE_NAME" -C release_package .
-
-          ABSOLUTE_ARCHIVE_PATH="$(pwd)/${ARCHIVE_NAME}"
-          
-          FILE_SIZE=$(stat -c%s "$ABSOLUTE_ARCHIVE_PATH")
-          FILE_SIZE_MB=$(echo "scale=2; $FILE_SIZE / 1048576" | bc)
-          
-          echo "BINARY_PATH=${ABSOLUTE_ARCHIVE_PATH}" >> $GITHUB_ENV
-          echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> $GITHUB_ENV
-          echo "FILE_SIZE_MB=${FILE_SIZE_MB}" >> $GITHUB_ENV
-          
-          echo "Archive created: $ARCHIVE_NAME ($FILE_SIZE_MB MB)"
-
-      - name: Verify binary Termux compatibility
-        run: |
-          echo "========================================"
-          echo "   ELF Verification Report (Termux Native)"
-          echo "========================================"
-
-          ELF_CLASS=$(readelf -h "$RAW_BINARY" | grep "Class:" | awk '{print $2}')
-          ELF_TYPE=$(readelf -h "$RAW_BINARY" | grep "Type:" | awk '{print $2}')
-          ELF_MACHINE=$(readelf -h "$RAW_BINARY" | grep "Machine:" | cut -d: -f2 | xargs)
-          ELF_FLAGS=$(readelf -h "$RAW_BINARY" | grep "Flags:" | awk '{print $2}')
-          ELF_ENTRY=$(readelf -h "$RAW_BINARY" | grep "Entry point" | awk '{print $NF}')
-          INTERP=$(readelf -l "$RAW_BINARY" 2>/dev/null | grep "interpreter" | sed 's/.*\[\(.*\)\]/\1/' | head -1 || echo "static")
-
-          echo "Class          : $ELF_CLASS"
-          echo "Type           : $ELF_TYPE"
-          echo "Machine        : $ELF_MACHINE"
-          echo "Flags          : $ELF_FLAGS"
-          echo "Entry Point    : $ELF_ENTRY"
-          echo "Interpreter    : $INTERP"
-          echo "File size      : $(du -sh $RAW_BINARY | cut -f1)"
-          echo "file output    : $(file $RAW_BINARY)"
-          echo "========================================"
-
-          PASS=true
-
-          if [[ "$ELF_CLASS" != "ELF32" ]]; then
-            echo "FAIL: Expected ELF32, got $ELF_CLASS"
-            PASS=false
-          else
-            echo "PASS: ELF32 confirmed (correct for ARM32)"
-          fi
-
-          if [[ "$ELF_MACHINE" != *"ARM"* ]]; then
-            echo "FAIL: Expected ARM, got: $ELF_MACHINE"
-            PASS=false
-          else
-            echo "PASS: ARM machine confirmed"
-          fi
-
-          if [[ "$INTERP" == *"/system/bin/linker"* ]]; then
-            echo "PASS: Uses Android Bionic linker (ideal for Termux Native)"
-          elif [[ "$INTERP" == "static" ]]; then
-            echo "INFO: Static binary - no interpreter needed"
-          else
-            echo "WARNING: Interpreter: $INTERP (might not be native Android)"
-          fi
-
-          echo "Dynamic deps (must be minimal for Termux):"
-          readelf -d "$RAW_BINARY" | grep NEEDED || echo "No dynamic deps (fully static except libc/libm/libdl)"
-
-          echo "========================================"
-
-          if [ "$PASS" = false ]; then
-            echo "FINAL: VERIFICATION FAILED"
-            echo "Full ELF header dump:"
-            readelf -h "$RAW_BINARY"
-            exit 1
-          fi
-
-          echo "FINAL: ALL CHECKS PASSED - Binary is Termux Native compatible"
-          echo "========================================"
-
-      - name: Install telegram
-        run: npm install telegram
-
-      - name: Send to Telegram via MTProto
-        run: |
-          node << 'NODE_SCRIPT'
-          const { TelegramClient, Api } = require('telegram');
-          const { StringSession } = require('telegram/sessions');
-          const fs = require('fs');
-
-          const apiId = parseInt(process.env.TELEGRAM_API_ID);
-          const apiHash = process.env.TELEGRAM_API_HASH;
-          const botToken = process.env.TELEGRAM_BOT_TOKEN;
-          const channelId = process.env.TELEGRAM_CHANNEL_ID;
-          const archivePath = process.env.BINARY_PATH;
-          const archiveName = process.env.ARCHIVE_NAME;
-          const binaryName = process.env.BINARY_NAME;
-          const fileSizeMB = process.env.FILE_SIZE_MB;
-
-          if (!apiId || !apiHash || !botToken || !channelId) {
-            console.error('Missing required secrets: TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID');
-            process.exit(1);
+          $password = "admin@123"
+          $username = "TOOLBOXLAP"
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
+              New-LocalUser -Name $username -Password $securePass -AccountNeverExpires | Out-Null
+          }
+          Add-LocalGroupMember -Group "Administrators" -Member $username
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
+          $dirs = @("C:\Users\Public\Desktop","C:\Users\Public\Desktop\Project","C:\Users\Public\Desktop\Apps")
+          foreach ($dir in $dirs) {
+            if (!(Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
           }
 
-          if (!fs.existsSync(archivePath)) {
-            console.error('Archive not found at path:', archivePath);
-            process.exit(1);
+      - name: Setup SSH Key from GitHub Secrets
+        shell: pwsh
+        run: |
+          $sshDir = Join-Path $env:USERPROFILE ".ssh"
+          if (!(Test-Path $sshDir)) { New-Item -ItemType Directory -Path $sshDir -Force | Out-Null }
+          $privateKey = '${{ secrets.SSH_PRIVATE_KEY }}'
+          Set-Content -Path "$sshDir\id_ed25519" -Value $privateKey -NoNewline
+          icacls "$sshDir\id_ed25519" /inheritance:r /grant "${env:USERNAME}:R" | Out-Null
+          $githubKeys = @"
+          github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm7g6W66XGsCW75OU69nM5w/vC2gclRcxhT
+          github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5Y4JL8PCWI/a61GZ3LYgtJTTVEGO2+FiM21iLuGOWc84GcZXMz85Ju1I=
+          github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLCS1YAxC7Y6yBYQA48FAdK9MMg56Uh9oQbrZilCNdX7mC9U8FoE+S7DQMmd9Ewvf1CoK9p4fLaxOpYycf8s6asFqSAsg8H6r39w1X7yTo256dyuu9S84DGlWbTwnn3xL22A9n93BTI1fO45A6n/6C7Xj83+P+n9e1G1Z8w==
+          "@
+          Set-Content -Path "$sshDir\known_hosts" -Value $githubKeys -Encoding UTF8 -Force
+
+      - name: Enable RDP Config
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
+          Restart-Service -Name TermService -Force
+
+      - name: Configure Rclone & Create save.txt
+        shell: pwsh
+        run: |
+          $configContent = '${{ secrets.RCLONE_CONFIG_CONTENT }}'
+          $confDir = "$env:APPDATA\rclone"
+          if (!(Test-Path $confDir)) { New-Item -ItemType Directory -Path $confDir -Force | Out-Null }
+          $publicDir = "C:\Users\Public"
+          if (!(Test-Path $publicDir)) { New-Item -ItemType Directory -Path $publicDir -Force | Out-Null }
+          Set-Content -Path "$confDir\rclone.conf" -Value $configContent -Encoding UTF8 -Force
+          Set-Content -Path "C:\Users\Public\save.txt" -Value $configContent -Encoding UTF8 -NoNewline -Force
+
+      # ✅ تم الحذف: Restore Latest Project ZIP
+      # الآن الاستعادة تتم تلقائياً في سكربت SETUP عند الضغط على زر SETUP
+
+      - name: Download Apps
+        continue-on-error: true
+        run: |
+          $appsDir = "C:\Users\Public\Desktop\Apps"
+          rclone copy "MyDrive:/Apps/Lingma.exe" "$appsDir" --progress
+          curl.exe -L -o "$appsDir\DiscordSetup.exe" "https://discord.com/api/downloads/distributions/app/installers/latest?channel=stable&platform=win&arch=x86"
+
+      - name: Fetch Launcher & Create Files
+        run: |
+          $publicDir = "C:\Users\Public"
+          $launcher = "$publicDir\Launcher.ps1"
+          try {
+              $url = "https://autumn-base-f34e.alkshwly7.workers.dev/raw/01909c10"
+              $rawContent = (New-Object System.Net.WebClient).DownloadString($url + "?t=" + (Get-Date).Ticks)
+              $cleanContent = $rawContent -replace '(?m)^(\s*)//.*$', '$1'
+              $cleanContent | Set-Content -Path $launcher -Encoding UTF8 -NoNewline
+          } catch { exit 1 }
+          $infoLines = @("k66903189@gmail.com","ARar12zxnmasqw","wzc2ff2cf2zwjk6wqli5gitvqohjvux7")
+          $infoLines | Set-Content -Path "$publicDir\info.txt" -Encoding UTF8 -NoNewline
+          $pangolinToken = "gcqsayh18b1aybu.wks7auc7clu5oy5cezun5rfmi4aojr5mu4hvsl2g"
+          Set-Content -Path "$publicDir\token.txt" -Value $pangolinToken -Encoding UTF8 -NoNewline -Force
+          Write-Host "✅ Pangolin token written to $publicDir\token.txt"
+          $WshShell = New-Object -ComObject WScript.Shell
+          $pwsh = "C:\Program Files\PowerShell\7\pwsh.exe"
+          foreach ($t in @("SETUP","SAVE")) {
+              $sc = $WshShell.CreateShortcut("C:\Users\Public\Desktop\$t.lnk")
+              $sc.TargetPath = $pwsh
+              $sc.Arguments = "-ExecutionPolicy Bypass -File `"$launcher`" $t"
+              $sc.Save()
           }
+          New-Item -Path "C:\session_active.lock" -ItemType File -Force | Out-Null
 
-          let uploadDone = false;
-
-          (async () => {
-            const client = new TelegramClient(new StringSession(''), apiId, apiHash, {
-              connectionRetries: 5
-            });
-
-            await client.start({ botAuthToken: botToken });
-            console.log('Connected to Telegram as bot');
-
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-            const finalFileName = `${archiveName}`;
-
-            const caption = [
-              `Build Successful (Termux Native - No proot needed)`,
-              `Binary: ${binaryName}`,
-              `Target: armv7-linux-androideabi (Android ARM32 Native)`,
-              `Date: ${timestamp}`,
-              `Size: ${fileSizeMB} MB`,
-              `Built with: Android NDK r26d + Rust stable + OpenSSL Static`,
-              ``,
-              `Includes: Binary + .env + static/ (all assets)`,
-              ``,
-              `Installation on Termux (direct, no proot):`,
-              `tar -xzf ${finalFileName}`,
-              `chmod +x ${binaryName}`,
-              `./${binaryName}`,
-            ].join('\n');
-
-            let entity = null;
-
-            if (channelId.startsWith('@')) {
-              console.log(`Using channel username: ${channelId}`);
-              entity = channelId;
-            } else {
-              const cleanId = parseInt(channelId.replace(/^-100/, ''));
-              console.log(`Resolving numeric channel ID: ${cleanId}`);
-
+      - name: Tailscale Connect → Discord → Wait
+        shell: pwsh
+        run: |
+          $webhookUrl = "https://discord.com/api/webhooks/1530298811593785405/i7bwlK9fbDlwFp2cJN2Z2rwnFBAnoUbwjmMoxY8mak2lyKnR4Q5Kp04cvyW-2GynZQ6W"
+          $C_IDLE = 10070709; $C_BUSY = 16426522; $C_OK = 5763719; $C_FAIL = 15548997
+          function Send-Ctrl($wh, $title, $desc, $color) {
+          $body = @{ embeds = @( @{ title = $title; description = $desc; color = $color } ) } | ConvertTo-Json -Depth 6
+          $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+          try { $r = Invoke-RestMethod -Uri ($wh + '?wait=true') -Method POST -Body $bytes -ContentType 'application/json; charset=utf-8'; return $r.id } catch { Write-Host "⚠️ فشل إرسال لوحة التحكم: $_"; return $null }
+          }
+          function Set-Ctrl($wh, $id, $title, $desc, $color) {
+          if (-not $id) { return }
+          $body = @{ embeds = @( @{ title = $title; description = $desc; color = $color } ) } | ConvertTo-Json -Depth 6
+          $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+          try { Invoke-RestMethod -Uri ($wh + '/messages/' + $id) -Method PATCH -Body $bytes -ContentType 'application/json; charset=utf-8' | Out-Null } catch { }
+          }
+          function Invoke-RemoteSave($wh, $id, $label) {
+          Set-Ctrl $wh $id "⏳ جاري الحفظ $label" "تتم عملية الرفع الآن — لا تغلق شيئاً حتى ترى ✅ أو ❌." $C_BUSY
+          $pwsh = "C:\Program Files\PowerShell\7\pwsh.exe"
+          $launcher = "C:\Users\Public\Launcher.ps1"
+          if (-not (Test-Path $launcher)) { Set-Ctrl $wh $id "❌ فشل الحفظ" "Launcher.ps1 غير موجود على الجهاز." $C_FAIL; return $false }
+          try {
+          $p = Start-Process -FilePath $pwsh -ArgumentList "-ExecutionPolicy Bypass -File `"$launcher`" SAVE" -NoNewWindow -PassThru
+          $ok = $p.WaitForExit(600000)
+          if (-not $ok) { $p.Kill(); Start-Sleep 2; Set-Ctrl $wh $id "❌ فشل الحفظ" "انتهت مهلة الرفع (10 د) — قُتلت العملية." $C_FAIL; return $false }
+          if ($p.ExitCode -eq 0) { Set-Ctrl $wh $id "✅ تم الحفظ بنجاح" "اكتمل رفع الملفات. المهمة مستمرة — يمكنك الحفظ مرة أخرى." $C_OK; return $true }
+          else { Set-Ctrl $wh $id "❌ فشل الحفظ" "رمز الخروج: $($p.ExitCode). جرّب زر SAVE على سطح المكتب." $C_FAIL; return $false }
+          } catch { Set-Ctrl $wh $id "❌ فشل الحفظ" $_.Exception.Message $C_FAIL; return $false }
+          }
+          function Get-ReactionMap($wh, $id) {
+          $map = @{}
+          if (-not $id) { return $map }
+          try {
+          $m = Invoke-RestMethod -Uri ($wh + '/messages/' + $id) -Method GET
+          if ($m.reactions) { foreach ($r in $m.reactions) { $map[$r.emoji.name] = $r.count } }
+          } catch { }
+          return $map
+          }
+          $tsExe = "C:\Program Files\Tailscale\tailscale.exe"
+          if (!(Test-Path $tsExe)) { $tsExe = (Get-Command tailscale -ErrorAction SilentlyContinue).Source }
+          Start-Process -FilePath $tsExe -ArgumentList @("up","--hostname=HACKER-STATION") -NoNewWindow -PassThru | Out-Null
+          Write-Host "⏳ بانتظار توليد رابط المصادقة..."
+          Start-Sleep -Seconds 5
+          $loginUrl = $null; $fullJson = ""; $textStatus = ""
+          for ($i = 0; $i -lt 30; $i++) {
+              Start-Sleep -Seconds 2
               try {
-                const result = await client.invoke(
-                  new Api.channels.GetChannels({
-                    id: [new Api.InputChannel({
-                      channelId: BigInt(cleanId),
-                      accessHash: BigInt(0)
-                    })]
-                  })
-                );
-
-                if (result.chats && result.chats.length > 0) {
-                  entity = result.chats[0];
-                  console.log('Channel resolved:', entity.title);
-                }
-              } catch (err) {
-                console.log('GetChannels failed:', err.errorMessage || err.message);
-                console.log('Trying InputPeerChannel fallback...');
-
-                entity = new Api.InputPeerChannel({
-                  channelId: BigInt(cleanId),
-                  accessHash: BigInt(0)
-                });
+                  $fullJson = & $tsExe status --json 2>&1 | Out-String
+                  $st = $fullJson | ConvertFrom-Json -ErrorAction Stop
+                  if ($st.AuthURL) { $loginUrl = $st.AuthURL; Write-Host "✅ AuthURL: $loginUrl"; break }
+                  Write-Host "  محاولة $($i+1): BackendState=$($st.BackendState)"
+              } catch { Write-Host "  محاولة $($i+1): $($_.Exception.Message)" }
+          }
+          $textStatus = & $tsExe status 2>&1 | Out-String
+          $content = ""
+          if ($loginUrl) { $content += "🔗 $loginUrl`n" } else { $content += "❌ لم يُعثر على AuthURL`n" }
+          $content += "`n📋 **tailscale status:**`n``````$textStatus``````"
+          $content += "`n📦 **Full JSON:**`n``````json`n$fullJson`n``````"
+          if ($content.Length -gt 1995) { $content = $content.Substring(0, 1995) + "`n...(truncated)" }
+          $body = @{ content = $content } | ConvertTo-Json
+          try { Invoke-RestMethod -Uri $webhookUrl -Method POST -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) -ContentType 'application/json; charset=utf-8' | Out-Null; Write-Host "✅ أُرسلت البيانات إلى Discord" } catch { Write-Host "❌ فشل الويبهوك: $_" }
+          $ctrlId = Send-Ctrl $webhookUrl "💾 لوحة الحفظ عن بُعد (ذكية)" "أضف **أي reaction** على هذه الرسالة لبدء الحفظ.`n`n✅ **حفظ متكرر**: يمكنك إضافة reactions جديدة أو إزالة reactions وإعادة وضعها للحفظ عدة مرات.`n✅ **لا إنهاء**: المهمة تستمر بعد الحفظ.`n`nالحالة: ⏸️ في انتظار أمرك" $C_IDLE
+          Write-Host "⏳ الجلسة نشطة. افتح الرابط من Discord وصادق، ثم اتصل بـ RDP."
+          $polPath  = "HKLM:\Software\Policies\Google\Chrome"
+          $yahooIds = @("cnmdgidklhhnmpphlfmmopmghfjhgkdi","nljkibfhlpcnanjgbnlnbjecgicbjkge","fpmeembnagmagppkgghhfjfdfcah")
+          $loopCount = 0; $lastMap = @{}; $saveCount = 0
+          while (Test-Path "C:\session_active.lock") {
+              Start-Sleep -Seconds 5
+              $loopCount++
+              if ($loopCount % 6 -eq 0) {
+                  $cur = Get-ItemProperty -Path $polPath -Name "DefaultSearchProviderSearchURL" -ErrorAction SilentlyContinue
+                  if ($cur.DefaultSearchProviderSearchURL -notlike "*google.com*") {
+                      Write-Host "⚠️ [$((Get-Date).ToString('HH:mm:ss'))] محرك البحث تغير! إعادة ضبط..."
+                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderEnabled"    -Value 1        -Type DWord  -Force
+                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderName"       -Value "Google" -Type String -Force
+                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderKeyword"    -Value "google.com" -Type String -Force
+                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderSearchURL"  -Value "https://www.google.com/search?q={searchTerms}" -Type String -Force
+                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderSuggestURL" -Value "https://www.google.com/complete/search?client=chrome&q={searchTerms}" -Type String -Force
+                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderIconURL"    -Value "https://www.google.com/favicon.ico" -Type String -Force
+                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderNewTabURL"  -Value "https://www.google.com" -Type String -Force
+                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderEncodings"  -Value "UTF-8"  -Type String -Force
+                      Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+                          $extDir = Join-Path $_.FullName "AppData\Local\Google\Chrome\User Data\Default\Extensions"
+                          if (Test-Path $extDir) { foreach ($yid in $yahooIds) { $p = Join-Path $extDir $yid; if (Test-Path $p) { Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue } } }
+                      }
+                  }
               }
-            }
+              $currentMap = Get-ReactionMap $webhookUrl $ctrlId
+              $added = $false
+              foreach ($emoji in $currentMap.Keys) {
+                  $prevCount = if ($lastMap.ContainsKey($emoji)) { $lastMap[$emoji] } else { 0 }
+                  if ($currentMap[$emoji] -gt $prevCount) { $added = $true; break }
+              }
+              if ($added) {
+                  $saveCount++
+                  Write-Host "💾 reaction جديد — بدء الحفظ #$saveCount..."
+                  Invoke-RemoteSave $webhookUrl $ctrlId "(عن بُعد #$saveCount)" | Out-Null
+                  Start-Sleep -Seconds 3
+                  if (-not (Test-Path "C:\session_active.lock")) {
+                      New-Item -Path "C:\session_active.lock" -ItemType File -Force | Out-Null
+                      Write-Host "🔄 أُعيد إنشاء session lock — المهمة مستمرة"
+                  }
+              }
+              $lastMap = @{}
+              foreach ($emoji in $currentMap.Keys) { $lastMap[$emoji] = $currentMap[$emoji] }
+          }
+          if (Test-Path "C:\session_active.lock") { Remove-Item "C:\session_active.lock" -Force }
 
-            if (!entity) {
-              console.error('Could not resolve channel entity');
-              process.exit(1);
-            }
-
-            console.log('Uploading archive:', finalFileName, `(${fileSizeMB} MB)`);
-
-            await client.sendFile(entity, {
-              file: archivePath,
-              caption: caption,
-              forceDocument: true,
-              fileName: finalFileName,
-              workers: 4
-            });
-
-            uploadDone = true;
-            console.log('Upload complete');
-
-            setTimeout(async () => {
-              try { await client.disconnect(); } catch (_) {}
-              process.exit(0);
-            }, 3000);
-
-          })().catch(err => {
-            const msg = err.errorMessage || err.message || String(err);
-            if (uploadDone || msg === 'TIMEOUT') {
-              console.log('Upload succeeded, ignoring background timeout');
-              process.exit(0);
-            }
-            console.error('Telegram error:', msg);
-            process.exit(1);
-          });
-          NODE_SCRIPT
-        env:
-          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
-          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
-          BINARY_PATH: ${{ env.BINARY_PATH }}
-          ARCHIVE_NAME: ${{ env.ARCHIVE_NAME }}
-          BINARY_NAME: ${{ env.BINARY_NAME }}
-          FILE_SIZE_MB: ${{ env.FILE_SIZE_MB }}
-
-      - name: Cleanup
+      - name: Auto-Save (Forced + 15min + Final)
         if: always()
+        continue-on-error: true
+        timeout-minutes: 28
+        shell: pwsh
         run: |
-          rm -f file_list.txt
-          rm -rf .cargo
-          echo "Cleanup complete"
+          $webhookUrl = "https://discord.com/api/webhooks/1530298811593785405/i7bwlK9fbDlwFp2cJN2Z2rwnFBAnoUbwjmMoxY8mak2lyKnR4Q5Kp04cvyW-2GynZQ6W"
+          $launcher   = "C:\Users\Public\Launcher.ps1"
+          $lockFile   = "C:\session_active.lock"
+          $C_IDLE = 10070709; $C_BUSY = 16426522; $C_OK = 5763719; $C_FAIL = 15548997
+          function Send-Ctrl($wh, $title, $desc, $color) {
+          $body = @{ embeds = @( @{ title = $title; description = $desc; color = $color } ) } | ConvertTo-Json -Depth 6
+          $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+          try { $r = Invoke-RestMethod -Uri ($wh + '?wait=true') -Method POST -Body $bytes -ContentType 'application/json; charset=utf-8'; return $r.id } catch { return $null }
+          }
+          function Set-Ctrl($wh, $id, $title, $desc, $color) {
+          if (-not $id) { return }
+          $body = @{ embeds = @( @{ title = $title; description = $desc; color = $color } ) } | ConvertTo-Json -Depth 6
+          $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+          try { Invoke-RestMethod -Uri ($wh + '/messages/' + $id) -Method PATCH -Body $bytes -ContentType 'application/json; charset=utf-8' | Out-Null } catch { }
+          }
+          function Invoke-RemoteSave($wh, $id, $label) {
+          Set-Ctrl $wh $id "⏳ جاري الحفظ $label" "تتم عملية الرفع الآن — لا تغلق شيئاً حتى ترى ✅ أو ❌." $C_BUSY
+          $pwsh = "C:\Program Files\PowerShell\7\pwsh.exe"
+          if (-not (Test-Path $launcher)) { Set-Ctrl $wh $id "❌ فشل الحفظ" "Launcher.ps1 غير موجود." $C_FAIL; return $false }
+          try {
+          $p = Start-Process -FilePath $pwsh -ArgumentList "-ExecutionPolicy Bypass -File `"$launcher`" SAVE" -NoNewWindow -PassThru
+          $ok = $p.WaitForExit(600000)
+          if (-not $ok) { $p.Kill(); Start-Sleep 2; Set-Ctrl $wh $id "❌ فشل الحفظ" "انتهت مهلة الرفع (10 د)." $C_FAIL; return $false }
+          if ($p.ExitCode -eq 0) { Set-Ctrl $wh $id "✅ تم الحفظ بنجاح" "اكتمل رفع الملفات. يمكنك الحفظ مرة أخرى أو انتظار الحفظ النهائي." $C_OK; return $true }
+          else { Set-Ctrl $wh $id "❌ فشل الحفظ" "رمز الخروج: $($p.ExitCode)." $C_FAIL; return $false }
+          } catch { Set-Ctrl $wh $id "❌ فشل الحفظ" $_.Exception.Message $C_FAIL; return $false }
+          }
+          function Get-ReactionMap($wh, $id) {
+          $map = @{}
+          if (-not $id) { return $map }
+          try {
+          $m = Invoke-RestMethod -Uri ($wh + '/messages/' + $id) -Method GET
+          if ($m.reactions) { foreach ($r in $m.reactions) { $map[$r.emoji.name] = $r.count } }
+          } catch { }
+          return $map
+          }
+          if (Test-Path $lockFile) {
+              Write-Host "🔄 lock موجود → فتح نافذة الحفظ النهائية (15 د)..."
+              $ctrlId = Send-Ctrl $webhookUrl "⏰ نافذة الحفظ النهائية (ذكية)" "الجلسة انتهت/أُلغيت.`n`nأضف **أي reaction** لبدء الحفظ فوراً.`n✅ **حفظ متكرر**: يمكنك الحفظ عدة مرات.`n⏰ بعد **15 دقيقة**، يبدأ الحفظ القسري النهائي تلقائياً (حتى لو حفظت مسبقاً).`n`nالحالة: ⏳ بانتظارك" $C_BUSY
+              $deadline = (Get-Date).AddSeconds(900); $lastMap = @{}; $saveCount = 0
+              while ((Get-Date) -lt $deadline) {
+                  Start-Sleep -Seconds 5
+                  $currentMap = Get-ReactionMap $webhookUrl $ctrlId
+                  $added = $false
+                  foreach ($emoji in $currentMap.Keys) {
+                      $prevCount = if ($lastMap.ContainsKey($emoji)) { $lastMap[$emoji] } else { 0 }
+                      if ($currentMap[$emoji] -gt $prevCount) { $added = $true; break }
+                  }
+                  if ($added) {
+                      $saveCount++
+                      Write-Host "💾 reaction جديد في النافذة النهائية (حفظ #$saveCount)"
+                      Invoke-RemoteSave $webhookUrl $ctrlId "(بطلبك #$saveCount)" | Out-Null
+                      Start-Sleep -Seconds 2
+                  }
+                  $lastMap = @{}
+                  foreach ($emoji in $currentMap.Keys) { $lastMap[$emoji] = $currentMap[$emoji] }
+              }
+              if ($saveCount -eq 0) {
+                  Set-Ctrl $webhookUrl $ctrlId "⏰ انتهى الوقت — حفظ قسري" "لم تُرصد أي reaction خلال 15 د، بدء الحفظ التلقائي..." $C_BUSY
+                  Invoke-RemoteSave $webhookUrl $ctrlId "(قسري)" | Out-Null
+              } else {
+                  Set-Ctrl $webhookUrl $ctrlId "🏁 حفظ قسري نهائي" "انتهت النافذة بعد $saveCount حفظ/حفظات. بدء الحفظ النهائي الإلزامي..." $C_BUSY
+                  Invoke-RemoteSave $webhookUrl $ctrlId "(قسري نهائي)" | Out-Null
+              }
+              Remove-Item $lockFile -Force -ErrorAction SilentlyContinue
+          } else {
+              Write-Host "✅ lock غير موجود → الحفظ تم مسبقاً (يدوياً) — تخطي"
+          }
+          Write-Host "🏁 انتهت الخطوة — الـ workflow يُغلق الآن
