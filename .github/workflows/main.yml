@@ -668,12 +668,82 @@ jobs:
           if (!(Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
           $tsExe = "C:\Program Files\Tailscale\tailscale.exe"
           if (!(Test-Path $tsExe)) { $tsExe = (Get-Command tailscale -ErrorAction SilentlyContinue).Source }
+
+          $tailscaleIp = "N/A"
+          $tailscaleStatus = "Not found"
+
           if ($tsExe) {
               Write-Host "Starting Tailscale..."
-              Start-Process -FilePath $tsExe -ArgumentList @("up","--hostname=RDP-STATION") -WindowStyle Hidden -PassThru | Out-Null
-              Start-Sleep -Seconds 5
-              Write-Host "Tailscale started"
-          } else { Write-Host "WARNING: Tailscale not found, skipping" }
+              & $tsExe up --authkey "${{ secrets.TAILSCALE_AUTHKEY }}" --hostname=RDP-STATION --accept-routes 2>&1 | Out-Null
+              Start-Sleep -Seconds 8
+
+              # محاولة الحصول على الـ IP من Tailscale
+              $maxWait = 30
+              $waited  = 0
+              while ($waited -lt $maxWait) {
+                  try {
+                      $statusJson = & $tsExe status --json 2>&1 | Out-String
+                      $tsData = $statusJson | ConvertFrom-Json -ErrorAction SilentlyContinue
+                      if ($tsData -and $tsData.Self -and $tsData.Self.TailscaleIPs) {
+                          $tailscaleIp     = $tsData.Self.TailscaleIPs[0]
+                          $tailscaleStatus = "Connected"
+                          Write-Host "Tailscale IP: $tailscaleIp"
+                          break
+                      }
+                  } catch {}
+                  Start-Sleep -Seconds 2
+                  $waited += 2
+              }
+
+              if ($tailscaleStatus -ne "Connected") {
+                  # fallback: حاول عبر ipconfig
+                  $tsIpLine = ipconfig | Select-String "100\.\d+\.\d+\.\d+" | Select-Object -First 1
+                  if ($tsIpLine) {
+                      $tailscaleIp     = ($tsIpLine.Line -replace '.*?(\d+\.\d+\.\d+\.\d+).*','$1').Trim()
+                      $tailscaleStatus = "Connected (fallback)"
+                      Write-Host "Tailscale IP (fallback): $tailscaleIp"
+                  } else {
+                      $tailscaleStatus = "Started (IP unknown)"
+                      Write-Host "WARNING: Could not get Tailscale IP"
+                  }
+              }
+          } else {
+              Write-Host "WARNING: Tailscale not found, skipping"
+              $tailscaleStatus = "Not installed"
+          }
+
+          # إرسال رسالة الاتصال إلى Discord
+          $discordToken   = $env:DISCORD_BOT_TOKEN
+          $discordChannel = $env:DISCORD_CHANNEL_ID
+          if ($discordToken -and $discordChannel) {
+              $rdpUser = "${{ secrets.RDP_USERNAME }}"
+              if ([string]::IsNullOrEmpty($rdpUser)) { $rdpUser = "TOOLBOXLAP" }
+              $publicIp = try { (Invoke-RestMethod -Uri "https://api.ipify.org" -TimeoutSec 5) } catch { "N/A" }
+              $now = Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC"
+              $msg = @"
+🖥️ **RDP SESSION READY**
+━━━━━━━━━━━━━━━━━━━━━
+🔗 **Tailscale IP:** ``$tailscaleIp``
+🌐 **Public IP:** ``$publicIp``
+👤 **RDP User:** ``$rdpUser``
+🔌 **RDP Port:** ``3389``
+📡 **Tailscale Status:** $tailscaleStatus
+🕐 **Time:** $now
+━━━━━━━━━━━━━━━━━━━━━
+Connect via: ``mstsc /v:$tailscaleIp``
+"@
+              $body = @{ content = $msg } | ConvertTo-Json -Compress
+              try {
+                  Invoke-RestMethod -Uri "https://discord.com/api/v10/channels/$discordChannel/messages" `
+                      -Method Post `
+                      -Headers @{ Authorization = "Bot $discordToken"; "Content-Type" = "application/json" } `
+                      -Body $body | Out-Null
+                  Write-Host "Discord connection message sent"
+              } catch {
+                  Write-Host "WARNING: Failed to send Discord message: $($_.Exception.Message)"
+              }
+          }
+
           Write-Host "Starting Discord bot..."
           $botProc = Start-Process -FilePath "node" -ArgumentList "$botDir\index.js" -WorkingDirectory $botDir -WindowStyle Hidden -PassThru -RedirectStandardOutput "$logDir\bot.out.log" -RedirectStandardError "$logDir\bot.err.log"
           Write-Host "Bot PID: $($botProc.Id)"
