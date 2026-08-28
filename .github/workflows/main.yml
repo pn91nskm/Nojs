@@ -712,15 +712,19 @@ jobs:
               $tailscaleStatus = "Not installed"
           }
 
-          # إرسال رسالة الاتصال إلى Discord
+          # إرسال رسالة الاتصال إلى Discord و Telegram
           $discordToken   = $env:DISCORD_BOT_TOKEN
           $discordChannel = $env:DISCORD_CHANNEL_ID
+          $telegramToken  = $env:TELEGRAM_BOT_TOKEN
+          $telegramChannel = $env:TELEGRAM_CHANNEL_ID
+          
+          $rdpUser = "${{ secrets.RDP_USERNAME }}"
+          if ([string]::IsNullOrEmpty($rdpUser)) { $rdpUser = "TOOLBOXLAP" }
+          $publicIp = try { (Invoke-RestMethod -Uri "https://api.ipify.org" -TimeoutSec 5) } catch { "N/A" }
+          $now = Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC"
+          $nl = "`n"
+
           if ($discordToken -and $discordChannel) {
-              $rdpUser = "${{ secrets.RDP_USERNAME }}"
-              if ([string]::IsNullOrEmpty($rdpUser)) { $rdpUser = "TOOLBOXLAP" }
-              $publicIp = try { (Invoke-RestMethod -Uri "https://api.ipify.org" -TimeoutSec 5) } catch { "N/A" }
-              $now = Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC"
-              $nl = "`n"
               $msg = "🖥️ **RDP SESSION READY**$nl" +
                      "━━━━━━━━━━━━━━━━━━━━━$nl" +
                      "🔗 **Tailscale IP:** ``$tailscaleIp``$nl" +
@@ -732,14 +736,43 @@ jobs:
                      "━━━━━━━━━━━━━━━━━━━━━$nl" +
                      "Connect via: ``mstsc /v:$tailscaleIp``"
               $body = @{ content = $msg } | ConvertTo-Json -Compress
+              $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($body)
               try {
                   Invoke-RestMethod -Uri "https://discord.com/api/v10/channels/$discordChannel/messages" `
                       -Method Post `
-                      -Headers @{ Authorization = "Bot $discordToken"; "Content-Type" = "application/json" } `
-                      -Body $body | Out-Null
+                      -Headers @{ Authorization = "Bot $discordToken"; "Content-Type" = "application/json; charset=utf-8" } `
+                      -Body $bodyBytes | Out-Null
                   Write-Host "Discord connection message sent"
               } catch {
                   Write-Host "WARNING: Failed to send Discord message: $($_.Exception.Message)"
+              }
+          }
+
+          if ($telegramToken -and $telegramChannel) {
+              $tgMsg = "🖥️ <b>RDP SESSION READY</b>$nl" +
+                       "━━━━━━━━━━━━━━━━━━━━━$nl" +
+                       "🔗 <b>Tailscale IP:</b> <code>$tailscaleIp</code>$nl" +
+                       "🌐 <b>Public IP:</b> <code>$publicIp</code>$nl" +
+                       "👤 <b>RDP User:</b> <code>$rdpUser</code>$nl" +
+                       "🔌 <b>RDP Port:</b> <code>3389</code>$nl" +
+                       "📡 <b>Tailscale Status:</b> $tailscaleStatus$nl" +
+                       "🕐 <b>Time:</b> $now$nl" +
+                       "━━━━━━━━━━━━━━━━━━━━━$nl" +
+                       "Connect via: <code>mstsc /v:$tailscaleIp</code>"
+              $tgBody = @{
+                  chat_id = $telegramChannel
+                  text = $tgMsg
+                  parse_mode = "HTML"
+              } | ConvertTo-Json -Compress
+              $tgBodyBytes = [System.Text.Encoding]::UTF8.GetBytes($tgBody)
+              try {
+                  Invoke-RestMethod -Uri "https://api.telegram.org/bot$telegramToken/sendMessage" `
+                      -Method Post `
+                      -Headers @{ "Content-Type" = "application/json; charset=utf-8" } `
+                      -Body $tgBodyBytes | Out-Null
+                  Write-Host "Telegram connection message sent"
+              } catch {
+                  Write-Host "WARNING: Failed to send Telegram message: $($_.Exception.Message)"
               }
           }
 
