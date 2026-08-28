@@ -7,6 +7,9 @@ jobs:
   secure-rdp:
     runs-on: windows-latest
     timeout-minutes: 360
+    env:
+      # رقم تسلسلي من GitHub (يتزايد تلقائياً مع كل تشغيل)
+      RUN_NUMBER: ${{ github.run_number }}
 
     steps:
       - name: Checkout Repository
@@ -30,24 +33,33 @@ jobs:
               echo "C:\Program Files\nodejs" >> $env:GITHUB_PATH
           }
 
-      - name: Setup RDP User
+      - name: Setup RDP User (Dynamic Sequential Name)
         shell: pwsh
         run: |
           $password = "${{ secrets.RDP_PASSWORD }}"
-          $username = "${{ secrets.RDP_USERNAME }}"
           if ([string]::IsNullOrEmpty($password)) { $password = "admin@123" }
-          if ([string]::IsNullOrEmpty($username)) { $username = "TOOLBOXLAP" }
+          
+          # 🎯 الاسم التسلسلي: rdp-alkshwly-{RUN_NUMBER}
+          $runNum = $env:RUN_NUMBER
+          if ([string]::IsNullOrEmpty($runNum)) { $runNum = "1" }
+          $username = "rdp-alkshwly-$runNum"
+          
+          # Windows usernames max 20 chars, so truncate if needed
+          if ($username.Length -gt 20) { $username = $username.Substring(0, 20) }
+          
+          Write-Host "🎯 RDP Username: $username (run #$runNum)"
+          
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
           if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
               New-LocalUser -Name $username -Password $securePass -AccountNeverExpires | Out-Null
           }
-          Add-LocalGroupMember -Group "Administrators" -Member $username
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
+          Add-LocalGroupMember -Group "Administrators" -Member $username -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username -ErrorAction SilentlyContinue
           $dirs = @("C:\Users\Public\Desktop","C:\Users\Public\Desktop\Project","C:\Users\Public\Desktop\Apps")
           foreach ($dir in $dirs) {
             if (!(Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
           }
-          Write-Host "RDP user configured"
+          Write-Host "RDP user configured: $username"
 
       - name: Enable RDP
         run: |
@@ -124,28 +136,18 @@ jobs:
           '@
           Set-Content -Path "C:\Users\Public\backup.ps1" -Value $script -Encoding UTF8 -Force
 
-      - name: Create Discord Bot Script (v5.6 - Clean Connection Message)
+      - name: Create Discord Bot Script (v5.7 - Sequential Hostname + Smart Auth)
         shell: pwsh
         run: |
           $botDir = "C:\Users\Public\bot"
           if (!(Test-Path $botDir)) { New-Item -ItemType Directory -Path $botDir -Force | Out-Null }
-          '{"name":"rdp-bot","version":"5.6.0","private":true,"main":"index.js","dependencies":{"discord.js":"^14.16.3","telegram":"^2.26.22"}}' | Set-Content "$botDir\package.json" -Encoding UTF8
+          '{"name":"rdp-bot","version":"5.7.0","private":true,"main":"index.js","dependencies":{"discord.js":"^14.16.3","telegram":"^2.26.22"}}' | Set-Content "$botDir\package.json" -Encoding UTF8
           $botScript = @'
           /**
-           * RDP Bot v5.6 - Clean Connection Message (no code blocks, no JSON inline)
-           * Message format (exactly as requested):
-           *   🖥️ RDP SESSION READY
-           *   ━━━━━━━━━━━━━━━━━━━━━
-           *   🔗 Tailscale IP: <ip>
-           *   🌐 Public IP: <public>
-           *   👤 RDP User: <user>
-           *   🔌 RDP Port: 3389
-           *   📡 Tailscale Status: <status>
-           *   🕐 Time: <time>
-           *   ━━━━━━━━━━━━━━━━━━━━━
-           *   Connect via: mstsc /v:<ip>
-           * 
-           * RAW JSON file sent separately as attachment (not in message body)
+           * RDP Bot v5.7
+           * - Sequential hostname: rdp-alkshwly-{RUN_NUMBER}
+           * - Smart auth: authkey → fallback to AuthURL
+           * - Ephemeral mode (auto-cleanup)
            */
           const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
           const { TelegramClient } = require('telegram');
@@ -194,7 +196,6 @@ jobs:
               .replace(/ts[A-Za-z0-9_\-]{20,}/g, '***MASKED***');
           }
 
-          // Discord webhook sender
           function sendDiscordWebhook(content) {
             if (!WEBHOOK_URL) return Promise.resolve(false);
             return new Promise((resolve) => {
@@ -234,15 +235,14 @@ jobs:
             });
           }
 
-          // ============================================================
-          // Tailscale status helpers
-          // ============================================================
           function getTailscaleStatus() {
             let fullJson = '', textStatus = '', ip = null, backendState = 'Unknown';
+            let authUrl = null;
             try {
               fullJson = execSync('"' + TS_EXE + '" status --json', { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
               const st = JSON.parse(fullJson);
               backendState = st.BackendState || 'Unknown';
+              authUrl = st.AuthURL || null;
               if (st.Self && st.Self.TailscaleIPs && st.Self.TailscaleIPs.length > 0) {
                 ip = st.Self.TailscaleIPs[0];
               }
@@ -250,7 +250,7 @@ jobs:
             try {
               textStatus = execSync('"' + TS_EXE + '" status', { encoding: 'utf8' });
             } catch (_) { textStatus = ''; }
-            return { fullJson, textStatus, ip, backendState };
+            return { fullJson, textStatus, ip, backendState, authUrl };
           }
 
           function captureTailscaleStatus() {
@@ -278,9 +278,6 @@ jobs:
             updatePanel();
           }
 
-          // ============================================================
-          // MTProto Connection
-          // ============================================================
           async function initTelegramConnection() {
             const delays = [3000, 5000, 8000, 12000, 20000];
             for (let i = 0; i < 5; i++) {
@@ -327,30 +324,61 @@ jobs:
             return false;
           }
 
-          // ============================================================
-          // CLEAN CONNECTION MESSAGE (exactly as requested)
-          // No code blocks, no JSON inline, simple and clear
-          // ============================================================
           async function sendConnectionMessage(sessionInfo) {
             const info = sessionInfo || {};
             const ip = info.tailscaleIp || tailscaleIp || 'N/A';
             const publicIp = info.publicIp || 'N/A';
-            const rdpUser = info.rdpUser || 'TOOLBOXLAP';
+            const rdpUser = info.rdpUser || 'rdp-alkshwly-1';
+            const hostname = info.hostname || 'unknown';
             const status = info.tailscaleStatus || 'Unknown';
+            const authUrl = info.authUrl || null;
             const time = info.startTime || new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
 
-            const msg = '🖥️ RDP SESSION READY\n' +
-                        '━━━━━━━━━━━━━━━━━━━━━\n' +
-                        '🔗 Tailscale IP: ' + ip + '\n' +
-                        '🌐 Public IP: ' + publicIp + '\n' +
-                        '👤 RDP User: ' + rdpUser + '\n' +
-                        '🔌 RDP Port: 3389\n' +
-                        '📡 Tailscale Status: ' + status + '\n' +
-                        '🕐 Time: ' + time + '\n' +
-                        '━━━━━━━━━━━━━━━━━━━━━\n' +
-                        'Connect via: mstsc /v:' + ip;
+            let msg;
+            if (status === 'NeedsLogin' || ip === 'N/A') {
+              // Fallback message with AuthURL if available
+              if (authUrl) {
+                msg = '⚠️ **Tailscale Requires Authentication**\n' +
+                      '━━━━━━━━━━━━━━━━━━━━━\n' +
+                      '🔗 **Auth URL:** ' + authUrl + '\n' +
+                      '🖥️ **Hostname:** ' + hostname + '\n' +
+                      '🌐 **Public IP:** ' + publicIp + '\n' +
+                      '👤 **RDP User:** ' + rdpUser + '\n' +
+                      '📡 **Status:** ' + status + '\n' +
+                      '🕐 **Time:** ' + time + '\n' +
+                      '━━━━━━━━━━━━━━━━━━━━━\n' +
+                      '👉 **Open the Auth URL above to authenticate Tailscale**\n' +
+                      '📎 JSON details will follow as attachment';
+              } else {
+                msg = '❌ **Tailscale Auth Failed**\n' +
+                      '━━━━━━━━━━━━━━━━━━━━━\n' +
+                      '🖥️ **Hostname:** ' + hostname + '\n' +
+                      '🌐 **Public IP:** ' + publicIp + '\n' +
+                      '👤 **RDP User:** ' + rdpUser + '\n' +
+                      '📡 **Status:** ' + status + '\n' +
+                      '🕐 **Time:** ' + time + '\n' +
+                      '━━━━━━━━━━━━━━━━━━━━━\n' +
+                      '⚠️ **Fix required:** Check TAILSCALE_AUTHKEY secret\n' +
+                      '• Must start with `tskey-auth-`\n' +
+                      '• Must have **Reusable** option enabled\n' +
+                      '• Must not be expired\n' +
+                      'Generate at: https://login.tailscale.com/admin/settings/keys';
+              }
+            } else {
+              // Success message
+              msg = '🖥️ RDP SESSION READY\n' +
+                    '━━━━━━━━━━━━━━━━━━━━━\n' +
+                    '🔗 Tailscale IP: ' + ip + '\n' +
+                    '🖥️ Hostname: ' + hostname + '\n' +
+                    '🌐 Public IP: ' + publicIp + '\n' +
+                    '👤 RDP User: ' + rdpUser + '\n' +
+                    '🔌 RDP Port: 3389\n' +
+                    '📡 Status: ' + status + '\n' +
+                    '🕐 Time: ' + time + '\n' +
+                    '━━━━━━━━━━━━━━━━━━━━━\n' +
+                    'Connect via: mstsc /v:' + ip;
+            }
 
-            // Discord: send via webhook (preferred) or bot
             let discordOk = false;
             if (WEBHOOK_URL) {
               discordOk = await sendDiscordWebhook(msg);
@@ -365,17 +393,12 @@ jobs:
               } catch (_) { addLog('❌ Discord bot msg failed'); }
             }
 
-            // Telegram: HTML with <code> for IP values
-            const tgHtml = '🖥️ <b>RDP SESSION READY</b>\n' +
-                          '━━━━━━━━━━━━━━━━━━━━━\n' +
-                          '🔗 <b>Tailscale IP:</b> <code>' + ip + '</code>\n' +
-                          '🌐 <b>Public IP:</b> <code>' + publicIp + '</code>\n' +
-                          '👤 <b>RDP User:</b> <code>' + rdpUser + '</code>\n' +
-                          '🔌 <b>RDP Port:</b> <code>3389</code>\n' +
-                          '📡 <b>Tailscale Status:</b> ' + status + '\n' +
-                          '🕐 <b>Time:</b> ' + time + '\n' +
-                          '━━━━━━━━━━━━━━━━━━━━━\n' +
-                          'Connect via: <code>mstsc /v:' + ip + '</code>';
+            // Telegram: HTML
+            const tgHtml = msg
+              .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+              .replace(/`([^`]+)`/g, '<code>$1</code>')
+              .replace(/^(🔗 Tailscale IP:|🖥️ Hostname:|🌐 Public IP:|👤 RDP User:|🔌 RDP Port:|Connect via:)(.+)$/gm, 
+                       '$1<code>$2</code>');
 
             let tgOk = false;
             if (tgClient && tgEntity) {
@@ -398,7 +421,6 @@ jobs:
             tgEntity = await resolveChannelEntity(tgClient);
             if (!tgEntity) { addLog('❌ TG entity not found'); lastResult = '❌ TG entity not found'; updatePanel(); return; }
 
-            // Read session info written by PowerShell
             let sessionInfo = null;
             try {
               const infoPath = 'C:\\Users\\Public\\session_info.json';
@@ -416,9 +438,6 @@ jobs:
             await sendStatusFileToBoth();
           }
 
-          // ============================================================
-          // Panel
-          // ============================================================
           function addLog(line) {
             const ts = new Date().toLocaleTimeString();
             logLines.push('`' + ts + '` ' + maskSecrets(line));
@@ -488,9 +507,9 @@ jobs:
               try { execSync('"' + TS_EXE + '" down', { stdio: 'ignore', timeout: 30000 }); } catch (_) {}
               await sleep(2000);
               let ok = false;
-              try { execSync('"' + TS_EXE + '" up --hostname=RDP-STATION --accept-routes', { stdio: 'ignore', timeout: 60000 }); ok = true; } catch (e1) {
+              try { execSync('"' + TS_EXE + '" up --hostname=rdp-alkshwly-' + process.env.RUN_NUMBER + ' --accept-routes', { stdio: 'ignore', timeout: 60000 }); ok = true; } catch (e1) {
                 if (TAILSCALE_AUTHKEY) {
-                  try { execSync('"' + TS_EXE + '" up --authkey=' + TAILSCALE_AUTHKEY + ' --hostname=RDP-STATION --accept-routes --reset', { stdio: 'ignore', timeout: 60000 }); ok = true; } catch (_) {}
+                  try { execSync('"' + TS_EXE + '" up --authkey=' + TAILSCALE_AUTHKEY + ' --hostname=rdp-alkshwly-' + process.env.RUN_NUMBER + ' --accept-routes --reset', { stdio: 'ignore', timeout: 60000 }); ok = true; } catch (_) {}
                 }
               }
               if (!ok) throw new Error('Reconnect failed');
@@ -505,7 +524,7 @@ jobs:
               if (newIp) {
                 tailscaleIp = newIp;
                 lastResult = '✅ IP: ' + newIp;
-                await sendConnectionMessage({ tailscaleIp: newIp, tailscaleStatus: 'Restarted' });
+                await sendConnectionMessage({ tailscaleIp: newIp, tailscaleStatus: 'Restarted', hostname: 'rdp-alkshwly-' + process.env.RUN_NUMBER });
                 captureTailscaleStatus();
                 await sendStatusFileToBoth();
               } else {
@@ -632,7 +651,6 @@ jobs:
           client.login(BOT_TOKEN).catch(e => { console.error('Login failed:', e.message); process.exit(1); });
           '@
           Set-Content -Path "$botDir\index.js" -Value $botScript -Encoding UTF8 -Force
-          Write-Host "Discord bot v5.6 created (clean connection message)"
 
       - name: Fetch Launcher
         shell: pwsh
@@ -650,7 +668,7 @@ jobs:
         run: |
           New-Item -Path "C:\session_active.lock" -ItemType File -Force | Out-Null
 
-      - name: All-in-One Session (Tailscale + Clean Connection Message)
+      - name: All-in-One Session (Sequential Hostname + Smart Auth)
         shell: pwsh
         env:
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
@@ -661,22 +679,36 @@ jobs:
           DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+          RUN_NUMBER: ${{ github.run_number }}
         run: |
           $botDir = "C:\Users\Public\bot"
           $logDir = "C:\logs"
           if (!(Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
           $tsExe = "C:\Program Files\Tailscale\tailscale.exe"
 
+          # 🎯 Hostname تسلسلي
+          $runNum = $env:RUN_NUMBER
+          if ([string]::IsNullOrEmpty($runNum)) { $runNum = "1" }
+          $hostname = "rdp-alkshwly-$runNum"
+          Write-Host "🎯 Hostname: $hostname (run #$runNum)"
+
           $tailscaleIp = "N/A"
           $tailscaleStatus = "Not installed"
+          $authUrl = ""
+          $rdpUser = "rdp-alkshwly-$runNum"
+          if ($rdpUser.Length -gt 20) { $rdpUser = $rdpUser.Substring(0, 20) }
 
           if (Test-Path $tsExe) {
-              Write-Host "Starting Tailscale with Auth Key..."
+              Write-Host "Starting Tailscale..."
               
               $authKey = "$env:TAILSCALE_AUTHKEY"
-              if (-not [string]::IsNullOrEmpty($authKey) -and $authKey.StartsWith("tskey-auth-")) {
-                  & $tsExe up --authkey $authKey --hostname=RDP-STATION --accept-routes --reset 2>&1 | Out-Null
-                  Start-Sleep -Seconds 8
+              $authKeyValid = (-not [string]::IsNullOrEmpty($authKey) -and $authKey.StartsWith("tskey-auth-"))
+
+              if ($authKeyValid) {
+                  Write-Host "Attempting authkey connection..."
+                  # --ephemeral = auto-cleanup after disconnect (prevents stale nodes)
+                  & $tsExe up --authkey $authKey --hostname=$hostname --accept-routes --ephemeral --reset 2>&1 | Out-Null
+                  Start-Sleep -Seconds 10
 
                   $maxWait = 30
                   $waited = 0
@@ -690,34 +722,54 @@ jobs:
                               if ($tsData.Self -and $tsData.Self.TailscaleIPs -and $tsData.Self.TailscaleIPs.Count -gt 0) {
                                   $tailscaleIp = $tsData.Self.TailscaleIPs[0]
                               }
-                              Write-Host "✅ Tailscale connected: IP=$tailscaleIp"
+                              Write-Host "✅ Tailscale connected via authkey: IP=$tailscaleIp"
                               break
                           }
                           elseif ($tsData.BackendState -eq "NeedsLogin") {
-                              Write-Host "⚠️ Auth key failed - NeedsLogin state"
-                              $tailscaleStatus = "NeedsLogin"
+                              Write-Host "⚠️ Authkey failed (NeedsLogin) - falling back to AuthURL"
+                              if ($tsData.AuthURL) { $authUrl = $tsData.AuthURL }
                               break
                           }
                       } catch { }
                       Start-Sleep -Seconds 2
                       $waited += 2
                   }
+              }
 
-                  # Fallback for IP
-                  if ($tailscaleIp -eq "N/A") {
-                      $tsIpLine = ipconfig | Select-String "100\.\d+\.\d+\.\d+" | Select-Object -First 1
-                      if ($tsIpLine) { 
-                          $tailscaleIp = ($tsIpLine.Line -replace '.*?(\d+\.\d+\.\d+\.\d+).*','$1').Trim()
-                          $tailscaleStatus = "Connected (fallback)"
-                      }
-                      elseif ($tailscaleStatus -eq "Running") {
-                          $tailscaleStatus = "Started (IP unknown)"
-                      }
+              # Fallback: If authkey failed or not provided, generate AuthURL
+              if ($tailscaleIp -eq "N/A" -and -not $authUrl) {
+                  Write-Host "Starting tailscale up (AuthURL mode)..."
+                  Start-Process -FilePath $tsExe -ArgumentList @("up","--hostname=$hostname") -NoNewWindow -PassThru | Out-Null
+                  Start-Sleep -Seconds 5
+                  
+                  for ($i = 0; $i -lt 30; $i++) {
+                      Start-Sleep -Seconds 2
+                      try {
+                          $statusJson = & $tsExe status --json 2>&1 | Out-String
+                          $tsData = $statusJson | ConvertFrom-Json -ErrorAction Stop
+                          if ($tsData.AuthURL) { 
+                              $authUrl = $tsData.AuthURL
+                              Write-Host "✅ AuthURL found: $authUrl"
+                              break
+                          }
+                          if ($tsData.BackendState -eq "Running") {
+                              if ($tsData.Self -and $tsData.Self.TailscaleIPs -and $tsData.Self.TailscaleIPs.Count -gt 0) {
+                                  $tailscaleIp = $tsData.Self.TailscaleIPs[0]
+                              }
+                              Write-Host "✅ Tailscale now running: IP=$tailscaleIp"
+                              break
+                          }
+                      } catch { }
                   }
               }
-              else {
-                  Write-Host "⚠️ No valid auth key provided"
-                  $tailscaleStatus = "NeedsLogin"
+
+              # Fallback for IP extraction
+              if ($tailscaleIp -eq "N/A") {
+                  $tsIpLine = ipconfig | Select-String "100\.\d+\.\d+\.\d+" | Select-Object -First 1
+                  if ($tsIpLine) { 
+                      $tailscaleIp = ($tsIpLine.Line -replace '.*?(\d+\.\d+\.\d+\.\d+).*','$1').Trim()
+                      $tailscaleStatus = "Connected (fallback)"
+                  }
               }
 
               # Save raw JSON
@@ -727,8 +779,7 @@ jobs:
               } catch {}
           }
 
-          # Session info for bot
-          $rdpUser = "${{ secrets.RDP_USERNAME }}"; if ([string]::IsNullOrEmpty($rdpUser)) { $rdpUser = "TOOLBOXLAP" }
+          # Session info
           $publicIp = try { (Invoke-RestMethod -Uri "https://api.ipify.org" -TimeoutSec 5) } catch { "N/A" }
           $now = Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC"
           
@@ -736,34 +787,39 @@ jobs:
               tailscaleIp=$tailscaleIp
               publicIp=$publicIp
               rdpUser=$rdpUser
+              hostname=$hostname
               tailscaleStatus=$tailscaleStatus
+              authUrl=$authUrl
               startTime=$now 
           } | ConvertTo-Json | Set-Content "C:\Users\Public\session_info.json" -Encoding UTF8
 
-          Write-Host "Session info written - bot will send clean connection message"
+          Write-Host "✅ Session info written"
+          Write-Host "  Hostname: $hostname"
+          Write-Host "  RDP User: $rdpUser"
+          Write-Host "  TS IP: $tailscaleIp"
+          Write-Host "  Status: $tailscaleStatus"
 
-          # ====== Discord initial message (short, bot sends full message) ======
+          # Discord webhook initial message
           $webhookUrl = "$env:DISCORD_WEBHOOK_URL"
           if ($webhookUrl) {
               $nl = "`n"
-              $msg = "🖥️ **RDP SESSION READY**$nl" +
+              $msg = "🖥️ **RDP SESSION READY** (run #$runNum)$nl" +
                      "━━━━━━━━━━━━━━━━━━━━━$nl" +
+                     "🖥️ **Hostname:** ``$hostname``$nl" +
                      "🔗 **Tailscale IP:** ``$tailscaleIp``$nl" +
                      "🌐 **Public IP:** ``$publicIp``$nl" +
                      "👤 **RDP User:** ``$rdpUser``$nl" +
-                     "🔌 **RDP Port:** ``3389``$nl" +
                      "📡 **Status:** $tailscaleStatus$nl" +
-                     "🕐 **Time:** $now$nl" +
-                     "━━━━━━━━━━━━━━━━━━━━━$nl" +
-                     "Connect via: ``mstsc /v:$tailscaleIp``$nl$nl" +
-                     "📎 Tailscale JSON file follows..."
+                     "━━━━━━━━━━━━━━━━━━━━━$nl"
+              if ($authUrl) {
+                  $msg += "⚠️ **Auth required:** $authUrl"
+              } else {
+                  $msg += "Connect via: ``mstsc /v:$tailscaleIp``"
+              }
               $body = @{ content = $msg } | ConvertTo-Json -Compress
               $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($body)
               try {
-                  Invoke-RestMethod -Uri $webhookUrl `
-                      -Method Post `
-                      -ContentType "application/json; charset=utf-8" `
-                      -Body $bodyBytes | Out-Null
+                  Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType "application/json; charset=utf-8" -Body $bodyBytes | Out-Null
                   Write-Host "✅ Discord webhook initial message sent"
               } catch {
                   Write-Host "⚠️ Discord webhook failed: $($_.Exception.Message)"
