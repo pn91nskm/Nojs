@@ -720,18 +720,17 @@ jobs:
               if ([string]::IsNullOrEmpty($rdpUser)) { $rdpUser = "TOOLBOXLAP" }
               $publicIp = try { (Invoke-RestMethod -Uri "https://api.ipify.org" -TimeoutSec 5) } catch { "N/A" }
               $now = Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC"
-              $msg = @"
-🖥️ **RDP SESSION READY**
-━━━━━━━━━━━━━━━━━━━━━
-🔗 **Tailscale IP:** ``$tailscaleIp``
-🌐 **Public IP:** ``$publicIp``
-👤 **RDP User:** ``$rdpUser``
-🔌 **RDP Port:** ``3389``
-📡 **Tailscale Status:** $tailscaleStatus
-🕐 **Time:** $now
-━━━━━━━━━━━━━━━━━━━━━
-Connect via: ``mstsc /v:$tailscaleIp``
-"@
+              $nl = "`n"
+              $msg = "🖥️ **RDP SESSION READY**$nl" +
+                     "━━━━━━━━━━━━━━━━━━━━━$nl" +
+                     "🔗 **Tailscale IP:** ``$tailscaleIp``$nl" +
+                     "🌐 **Public IP:** ``$publicIp``$nl" +
+                     "👤 **RDP User:** ``$rdpUser``$nl" +
+                     "🔌 **RDP Port:** ``3389``$nl" +
+                     "📡 **Tailscale Status:** $tailscaleStatus$nl" +
+                     "🕐 **Time:** $now$nl" +
+                     "━━━━━━━━━━━━━━━━━━━━━$nl" +
+                     "Connect via: ``mstsc /v:$tailscaleIp``"
               $body = @{ content = $msg } | ConvertTo-Json -Compress
               try {
                   Invoke-RestMethod -Uri "https://discord.com/api/v10/channels/$discordChannel/messages" `
