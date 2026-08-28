@@ -8,7 +8,6 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 360
     env:
-      # رقم تسلسلي من GitHub (يتزايد تلقائياً مع كل تشغيل)
       RUN_NUMBER: ${{ github.run_number }}
 
     steps:
@@ -23,28 +22,23 @@ jobs:
               $npmVer = (npm --version 2>&1).Trim()
               if ($nodeVer -match '^v\d') {
                   Write-Host "Node.js already installed: $nodeVer"
-                  Write-Host "npm already installed: $npmVer"
                   exit 0
               }
               throw "Node not responding"
           } catch {
-              Write-Host "Node.js not found - installing via Chocolatey..."
               choco install nodejs-lts -y --silent --no-progress
               echo "C:\Program Files\nodejs" >> $env:GITHUB_PATH
           }
 
-      - name: Setup RDP User (Dynamic Sequential Name)
+      - name: Setup RDP User (Sequential + Password in Message)
         shell: pwsh
         run: |
           $password = "${{ secrets.RDP_PASSWORD }}"
           if ([string]::IsNullOrEmpty($password)) { $password = "admin@123" }
           
-          # 🎯 الاسم التسلسلي: rdp-alkshwly-{RUN_NUMBER}
           $runNum = $env:RUN_NUMBER
           if ([string]::IsNullOrEmpty($runNum)) { $runNum = "1" }
           $username = "rdp-alkshwly-$runNum"
-          
-          # Windows usernames max 20 chars, so truncate if needed
           if ($username.Length -gt 20) { $username = $username.Substring(0, 20) }
           
           Write-Host "🎯 RDP Username: $username (run #$runNum)"
@@ -55,31 +49,28 @@ jobs:
           }
           Add-LocalGroupMember -Group "Administrators" -Member $username -ErrorAction SilentlyContinue
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username -ErrorAction SilentlyContinue
+          
           $dirs = @("C:\Users\Public\Desktop","C:\Users\Public\Desktop\Project","C:\Users\Public\Desktop\Apps")
           foreach ($dir in $dirs) {
             if (!(Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
           }
-          Write-Host "RDP user configured: $username"
 
       - name: Enable RDP
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
           Restart-Service -Name TermService -Force
-          Write-Host "RDP enabled"
 
       - name: Install Tailscale
         run: |
           choco install tailscale -y --silent --no-progress
           echo "C:\Program Files\Tailscale" >> $env:GITHUB_PATH
-          Write-Host "Tailscale installed"
 
       - name: Install Node Packages
         run: |
           cd C:\Users\Public
           npm init -y
           npm install telegram@2.26.22 discord.js@14.16.3
-          Write-Host "Node packages installed"
 
       - name: Create Backup Script
         shell: pwsh
@@ -136,21 +127,22 @@ jobs:
           '@
           Set-Content -Path "C:\Users\Public\backup.ps1" -Value $script -Encoding UTF8 -Force
 
-      - name: Create Discord Bot Script (v5.7 - Sequential Hostname + Smart Auth)
+      - name: Create Discord Bot Script (v5.8 - Password + Unified Commands)
         shell: pwsh
         run: |
           $botDir = "C:\Users\Public\bot"
           if (!(Test-Path $botDir)) { New-Item -ItemType Directory -Path $botDir -Force | Out-Null }
-          '{"name":"rdp-bot","version":"5.7.0","private":true,"main":"index.js","dependencies":{"discord.js":"^14.16.3","telegram":"^2.26.22"}}' | Set-Content "$botDir\package.json" -Encoding UTF8
+          '{"name":"rdp-bot","version":"5.8.0","private":true,"main":"index.js","dependencies":{"discord.js":"^14.16.3","telegram":"^2.26.22"}}' | Set-Content "$botDir\package.json" -Encoding UTF8
           $botScript = @'
           /**
-           * RDP Bot v5.7
-           * - Sequential hostname: rdp-alkshwly-{RUN_NUMBER}
-           * - Smart auth: authkey → fallback to AuthURL
-           * - Ephemeral mode (auto-cleanup)
+           * RDP Bot v5.8
+           * - Password included in connection message
+           * - Unified commands: work in BOTH Discord and Telegram
+           * - Telegram inline buttons for interactive control
+           * - Comprehensive error handling (no crashes)
            */
           const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
-          const { TelegramClient } = require('telegram');
+          const { TelegramClient, Api } = require('telegram');
           const { StringSession } = require('telegram/sessions');
           const { execSync, spawn } = require('child_process');
           const fs = require('fs');
@@ -183,6 +175,7 @@ jobs:
           let controlChannel = null, lastStatusMsg = null, logLines = [];
           let tgClient = null, tgEntity = null, tailscaleIp = 'N/A';
           let statusPending = false;
+          let tgPanelMsg = null;
 
           const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
 
@@ -220,24 +213,23 @@ jobs:
                       console.log('[WH] Discord webhook sent');
                       resolve(true);
                     } else {
-                      console.error('[WH] Discord webhook failed: ' + res.statusCode + ' ' + data);
+                      console.error('[WH] Discord webhook failed: ' + res.statusCode);
                       resolve(false);
                     }
                   });
                 });
-                req.on('error', e => { console.error('[WH] Webhook error:', e.message); resolve(false); });
+                req.on('error', e => { console.error('[WH] Error:', e.message); resolve(false); });
                 req.write(body);
                 req.end();
               } catch (e) {
-                console.error('[WH] Webhook exception:', e.message);
+                console.error('[WH] Exception:', e.message);
                 resolve(false);
               }
             });
           }
 
           function getTailscaleStatus() {
-            let fullJson = '', textStatus = '', ip = null, backendState = 'Unknown';
-            let authUrl = null;
+            let fullJson = '', textStatus = '', ip = null, backendState = 'Unknown', authUrl = null;
             try {
               fullJson = execSync('"' + TS_EXE + '" status --json', { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
               const st = JSON.parse(fullJson);
@@ -324,11 +316,15 @@ jobs:
             return false;
           }
 
+          // ============================================================
+          // CONNECTION MESSAGE with PASSWORD
+          // ============================================================
           async function sendConnectionMessage(sessionInfo) {
             const info = sessionInfo || {};
             const ip = info.tailscaleIp || tailscaleIp || 'N/A';
             const publicIp = info.publicIp || 'N/A';
             const rdpUser = info.rdpUser || 'rdp-alkshwly-1';
+            const rdpPassword = info.rdpPassword || '(check RDP_PASSWORD secret)';
             const hostname = info.hostname || 'unknown';
             const status = info.tailscaleStatus || 'Unknown';
             const authUrl = info.authUrl || null;
@@ -336,7 +332,6 @@ jobs:
 
             let msg;
             if (status === 'NeedsLogin' || ip === 'N/A') {
-              // Fallback message with AuthURL if available
               if (authUrl) {
                 msg = '⚠️ **Tailscale Requires Authentication**\n' +
                       '━━━━━━━━━━━━━━━━━━━━━\n' +
@@ -344,34 +339,34 @@ jobs:
                       '🖥️ **Hostname:** ' + hostname + '\n' +
                       '🌐 **Public IP:** ' + publicIp + '\n' +
                       '👤 **RDP User:** ' + rdpUser + '\n' +
+                      '🔑 **Password:** ' + rdpPassword + '\n' +
                       '📡 **Status:** ' + status + '\n' +
                       '🕐 **Time:** ' + time + '\n' +
                       '━━━━━━━━━━━━━━━━━━━━━\n' +
-                      '👉 **Open the Auth URL above to authenticate Tailscale**\n' +
-                      '📎 JSON details will follow as attachment';
+                      '👉 **Open the Auth URL above to authenticate**';
               } else {
                 msg = '❌ **Tailscale Auth Failed**\n' +
                       '━━━━━━━━━━━━━━━━━━━━━\n' +
                       '🖥️ **Hostname:** ' + hostname + '\n' +
                       '🌐 **Public IP:** ' + publicIp + '\n' +
                       '👤 **RDP User:** ' + rdpUser + '\n' +
+                      '🔑 **Password:** ' + rdpPassword + '\n' +
                       '📡 **Status:** ' + status + '\n' +
                       '🕐 **Time:** ' + time + '\n' +
                       '━━━━━━━━━━━━━━━━━━━━━\n' +
-                      '⚠️ **Fix required:** Check TAILSCALE_AUTHKEY secret\n' +
+                      '⚠️ **Fix:** Check TAILSCALE_AUTHKEY secret\n' +
                       '• Must start with `tskey-auth-`\n' +
-                      '• Must have **Reusable** option enabled\n' +
-                      '• Must not be expired\n' +
-                      'Generate at: https://login.tailscale.com/admin/settings/keys';
+                      '• Must have **Reusable** enabled\n' +
+                      'Generate: https://login.tailscale.com/admin/settings/keys';
               }
             } else {
-              // Success message
               msg = '🖥️ RDP SESSION READY\n' +
                     '━━━━━━━━━━━━━━━━━━━━━\n' +
                     '🔗 Tailscale IP: ' + ip + '\n' +
                     '🖥️ Hostname: ' + hostname + '\n' +
                     '🌐 Public IP: ' + publicIp + '\n' +
                     '👤 RDP User: ' + rdpUser + '\n' +
+                    '🔑 Password: ' + rdpPassword + '\n' +
                     '🔌 RDP Port: 3389\n' +
                     '📡 Status: ' + status + '\n' +
                     '🕐 Time: ' + time + '\n' +
@@ -383,7 +378,6 @@ jobs:
             if (WEBHOOK_URL) {
               discordOk = await sendDiscordWebhook(msg);
               if (discordOk) addLog('📨 Conn msg -> Discord webhook');
-              else addLog('❌ Discord webhook failed');
             }
             if (!discordOk && controlChannel) {
               try {
@@ -393,21 +387,78 @@ jobs:
               } catch (_) { addLog('❌ Discord bot msg failed'); }
             }
 
-            // Telegram: HTML
             const tgHtml = msg
               .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
-              .replace(/`([^`]+)`/g, '<code>$1</code>')
-              .replace(/^(🔗 Tailscale IP:|🖥️ Hostname:|🌐 Public IP:|👤 RDP User:|🔌 RDP Port:|Connect via:)(.+)$/gm, 
-                       '$1<code>$2</code>');
+              .replace(/`([^`]+)`/g, '<code>$1</code>');
 
             let tgOk = false;
             if (tgClient && tgEntity) {
               tgOk = await sendTelegramMsg(tgHtml, 3);
               if (tgOk) addLog('📨 Conn msg -> TG');
-              else addLog('❌ TG msg failed');
             }
 
             return discordOk || tgOk;
+          }
+
+          // ============================================================
+          // UNIFIED COMMAND HANDLER (works in both Discord and Telegram)
+          // ============================================================
+          async function handleCommand(cmd, source) {
+            const c = cmd.trim().toLowerCase();
+            let response = '';
+
+            try {
+              if (c === '!' || c === '!c' || c === '!cancel') {
+                await killAll();
+                response = '🛑 Operation cancelled';
+              }
+              else if (c === '!save' || c === '!start') {
+                runBackup();
+                response = '💾 Backup started';
+              }
+              else if (c === '!restart' || c === '!rts') {
+                await restartTailscale();
+                response = '🔄 Tailscale restart initiated';
+              }
+              else if (c === '!json') {
+                captureTailscaleStatus();
+                await sendStatusFileToBoth();
+                response = '📎 JSON file sent';
+              }
+              else if (c === '!conn') {
+                await sendConnectionMessage();
+                response = '📨 Connection message re-sent';
+              }
+              else if (c === '!status') {
+                const remaining = Math.max(0, 360 - Math.floor((Date.now() - WORKFLOW_START) / 60000));
+                response = '**State:** ' + state + '\n**Phase:** ' + currentPhase + '\n**Saves:** ' + saveCount + '\n**Remaining:** ' + remaining + ' min\n**Last:** ' + maskSecrets(lastResult);
+              }
+              else if (c === '!help') {
+                response = '**Available Commands:**\n' +
+                          '`!save` - Start backup\n' +
+                          '`!cancel` - Cancel operation\n' +
+                          '`!restart` - Restart Tailscale\n' +
+                          '`!json` - Send Tailscale JSON\n' +
+                          '`!conn` - Re-send connection message\n' +
+                          '`!status` - Show current status\n' +
+                          '`!help` - Show this help';
+              }
+              else {
+                response = '❓ Unknown command. Type `!help` for available commands.';
+              }
+            } catch (err) {
+              response = '❌ Command error: ' + maskSecrets(err.message).substring(0, 100);
+              console.error('[CMD] Error:', err);
+            }
+
+            // Send response to the same platform
+            if (source === 'discord' && controlChannel) {
+              try { await controlChannel.send(response); } catch (_) {}
+            } else if (source === 'telegram') {
+              await sendTelegramMsg(response.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>'), 2);
+            }
+
+            return response;
           }
 
           async function initializeTelegramAndNotify() {
@@ -436,6 +487,96 @@ jobs:
 
             captureTailscaleStatus();
             await sendStatusFileToBoth();
+
+            // Send Telegram panel with inline buttons
+            await sendTelegramPanel();
+          }
+
+          // ============================================================
+          // TELEGRAM INLINE BUTTONS PANEL
+          // ============================================================
+          async function sendTelegramPanel() {
+            if (!tgClient || !tgEntity) return;
+            try {
+              const remaining = Math.max(0, 360 - Math.floor((Date.now() - WORKFLOW_START) / 60000));
+              const text = '🖥️ <b>RDP Ultra Station Control</b>\n\n' +
+                           '📊 <b>Status:</b> ' + state + '\n' +
+                           '⏱️ <b>Remaining:</b> ' + remaining + ' min\n' +
+                           '💾 <b>Saves:</b> ' + saveCount + '\n' +
+                           '🔗 <b>TS IP:</b> <code>' + tailscaleIp + '</code>\n\n' +
+                           'Use buttons below or type commands:';
+
+              const buttons = [
+                [
+                  { text: '💾 Save', callback_data: 'btn_save' },
+                  { text: '🛑 Cancel', callback_data: 'btn_cancel' }
+                ],
+                [
+                  { text: '🔄 Restart TS', callback_data: 'btn_restart_ts' },
+                  { text: '📊 Status', callback_data: 'btn_status' }
+                ],
+                [
+                  { text: '📎 JSON', callback_data: 'btn_json' },
+                  { text: '📨 Re-send', callback_data: 'btn_conn' }
+                ]
+              ];
+
+              if (tgPanelMsg) {
+                try {
+                  await tgClient.editMessage(tgEntity, tgPanelMsg.id, undefined, text, { buttons: buttons, parseMode: 'html' });
+                } catch (_) {
+                  tgPanelMsg = await tgClient.sendMessage(tgEntity, text, { buttons: buttons, parseMode: 'html' });
+                }
+              } else {
+                tgPanelMsg = await tgClient.sendMessage(tgEntity, text, { buttons: buttons, parseMode: 'html' });
+              }
+            } catch (err) {
+              console.error('[TG PANEL] Error:', err.message);
+            }
+          }
+
+          // Handle Telegram callback queries
+          async function handleTelegramCallback(callbackData) {
+            try {
+              switch (callbackData) {
+                case 'btn_save':
+                  runBackup();
+                  await sendTelegramMsg('💾 Backup started', 2);
+                  break;
+                case 'btn_cancel':
+                  await killAll();
+                  await sendTelegramMsg('🛑 Cancelled', 2);
+                  break;
+                case 'btn_restart_ts':
+                  await restartTailscale();
+                  await sendTelegramMsg('🔄 Restart initiated', 2);
+                  break;
+                case 'btn_status': {
+                  const remaining = Math.max(0, 360 - Math.floor((Date.now() - WORKFLOW_START) / 60000));
+                  await sendTelegramMsg(
+                    '<b>Status:</b> ' + state + '\n' +
+                    '<b>Remaining:</b> ' + remaining + ' min\n' +
+                    '<b>Saves:</b> ' + saveCount + '\n' +
+                    '<b>Last:</b> ' + maskSecrets(lastResult),
+                    2
+                  );
+                  break;
+                }
+                case 'btn_json':
+                  captureTailscaleStatus();
+                  await sendStatusFileToBoth();
+                  await sendTelegramMsg('📎 JSON sent', 2);
+                  break;
+                case 'btn_conn':
+                  await sendConnectionMessage();
+                  await sendTelegramMsg('📨 Connection message re-sent', 2);
+                  break;
+              }
+              await sendTelegramPanel();
+            } catch (err) {
+              console.error('[TG CALLBACK] Error:', err.message);
+              await sendTelegramMsg('❌ Error: ' + maskSecrets(err.message).substring(0, 80), 2);
+            }
           }
 
           function addLog(line) {
@@ -486,7 +627,11 @@ jobs:
           function updatePanel() {
             if (statusPending) return Promise.resolve();
             statusPending = true;
-            setTimeout(function() { statusPending = false; postStatus().catch(function(){}); }, 2500);
+            setTimeout(function() {
+              statusPending = false;
+              postStatus().catch(function(){});
+              sendTelegramPanel().catch(function(){});
+            }, 2500);
             return Promise.resolve();
           }
 
@@ -507,9 +652,10 @@ jobs:
               try { execSync('"' + TS_EXE + '" down', { stdio: 'ignore', timeout: 30000 }); } catch (_) {}
               await sleep(2000);
               let ok = false;
-              try { execSync('"' + TS_EXE + '" up --hostname=rdp-alkshwly-' + process.env.RUN_NUMBER + ' --accept-routes', { stdio: 'ignore', timeout: 60000 }); ok = true; } catch (e1) {
+              const runNum = process.env.RUN_NUMBER || '1';
+              try { execSync('"' + TS_EXE + '" up --hostname=rdp-alkshwly-' + runNum + ' --accept-routes', { stdio: 'ignore', timeout: 60000 }); ok = true; } catch (e1) {
                 if (TAILSCALE_AUTHKEY) {
-                  try { execSync('"' + TS_EXE + '" up --authkey=' + TAILSCALE_AUTHKEY + ' --hostname=rdp-alkshwly-' + process.env.RUN_NUMBER + ' --accept-routes --reset', { stdio: 'ignore', timeout: 60000 }); ok = true; } catch (_) {}
+                  try { execSync('"' + TS_EXE + '" up --authkey=' + TAILSCALE_AUTHKEY + ' --hostname=rdp-alkshwly-' + runNum + ' --accept-routes --reset', { stdio: 'ignore', timeout: 60000 }); ok = true; } catch (_) {}
                 }
               }
               if (!ok) throw new Error('Reconnect failed');
@@ -524,7 +670,7 @@ jobs:
               if (newIp) {
                 tailscaleIp = newIp;
                 lastResult = '✅ IP: ' + newIp;
-                await sendConnectionMessage({ tailscaleIp: newIp, tailscaleStatus: 'Restarted', hostname: 'rdp-alkshwly-' + process.env.RUN_NUMBER });
+                await sendConnectionMessage({ tailscaleIp: newIp, tailscaleStatus: 'Restarted', hostname: 'rdp-alkshwly-' + runNum });
                 captureTailscaleStatus();
                 await sendStatusFileToBoth();
               } else {
@@ -608,34 +754,78 @@ jobs:
             try { controlChannel = await client.channels.fetch(CHANNEL_ID); lastStatusMsg = await controlChannel.send({ embeds: [buildEmbed()], components: buildButtons() }); } catch (_) {}
             await initializeTelegramAndNotify();
             setInterval(function() { checkTimeoutAlerts().catch(function(){}); }, 30000);
-            setInterval(function() { postStatus().catch(function(){}); }, 30000);
+            setInterval(function() { postStatus().catch(function(){}); sendTelegramPanel().catch(function(){}); }, 30000);
           });
 
+          // Discord interactions
           client.on('interactionCreate', async function(i) {
             if (!i.isButton()) return;
             try { await i.deferUpdate(); } catch (_) {}
-            switch (i.customId) {
-              case 'btn_save': runBackup(); break;
-              case 'btn_cancel': await killAll(); break;
-              case 'btn_restart_ts': await restartTailscale(); break;
-              case 'btn_status': {
-                const remaining = Math.max(0, 360 - Math.floor((Date.now() - WORKFLOW_START) / 60000));
-                i.followUp({ content: '**State:** ' + state + ' | **Remaining:** ' + remaining + ' min\n**Last:** ' + maskSecrets(lastResult), ephemeral: true }).catch(function(){});
-                break;
+            try {
+              switch (i.customId) {
+                case 'btn_save': runBackup(); break;
+                case 'btn_cancel': await killAll(); break;
+                case 'btn_restart_ts': await restartTailscale(); break;
+                case 'btn_status': {
+                  const remaining = Math.max(0, 360 - Math.floor((Date.now() - WORKFLOW_START) / 60000));
+                  i.followUp({ content: '**State:** ' + state + ' | **Remaining:** ' + remaining + ' min\n**Last:** ' + maskSecrets(lastResult), ephemeral: true }).catch(function(){});
+                  break;
+                }
               }
+            } catch (err) {
+              console.error('[DISCORD BTN] Error:', err.message);
             }
           });
 
+          // Discord messages
           client.on('messageCreate', async function(msg) {
             if (msg.author.bot || msg.channelId !== CHANNEL_ID) return;
-            const c = msg.content.trim().toLowerCase();
-            if (c === '!' || c === '!c') { await killAll(); msg.react('🛑').catch(function(){}); }
-            else if (c === '!save') { runBackup(); msg.react('💾').catch(function(){}); }
-            else if (c === '!restart') { await restartTailscale(); msg.react('🔄').catch(function(){}); }
-            else if (c === '!json') { captureTailscaleStatus(); await sendStatusFileToBoth(); msg.react('📎').catch(function(){}); }
-            else if (c === '!conn') { await sendConnectionMessage(); msg.react('📨').catch(function(){}); }
-            else if (c === '!status') { msg.reply({ content: '**State:** ' + state + ' | **Last:** ' + maskSecrets(lastResult) }).catch(function(){}); }
+            try {
+              await handleCommand(msg.content, 'discord');
+              if (msg.content.trim().toLowerCase().startsWith('!')) {
+                msg.react('✅').catch(function(){});
+              }
+            } catch (err) {
+              console.error('[DISCORD MSG] Error:', err.message);
+            }
           });
+
+          // Telegram updates (messages + callbacks)
+          if (tgClient) {
+            tgClient.addEventHandler(async (update) => {
+              try {
+                if (update.message && update.message.message) {
+                  const text = update.message.message;
+                  if (text.startsWith('!')) {
+                    await handleCommand(text, 'telegram');
+                  }
+                }
+                if (update.callbackQuery) {
+                  const data = update.callbackQuery.data.toString();
+                  await handleTelegramCallback(data);
+                  try {
+                    await tgClient.answerCallbackQuery(update.callbackQuery.queryId, { message: 'Done' });
+                  } catch (_) {}
+                }
+              } catch (err) {
+                console.error('[TG UPDATE] Error:', err.message);
+              }
+            }, new Api.UpdateNewMessage({}));
+
+            tgClient.addEventHandler(async (update) => {
+              try {
+                if (update.callbackQuery) {
+                  const data = update.callbackQuery.data.toString();
+                  await handleTelegramCallback(data);
+                  try {
+                    await tgClient.answerCallbackQuery(update.callbackQuery.queryId, { message: 'Done' });
+                  } catch (_) {}
+                }
+              } catch (err) {
+                console.error('[TG CALLBACK] Error:', err.message);
+              }
+            }, new Api.UpdateCallbackQuery({}));
+          }
 
           process.on('unhandledRejection', e => console.error('Unhandled:', e.message || e));
           async function shutdown(reason) {
@@ -668,7 +858,7 @@ jobs:
         run: |
           New-Item -Path "C:\session_active.lock" -ItemType File -Force | Out-Null
 
-      - name: All-in-One Session (Sequential Hostname + Smart Auth)
+      - name: All-in-One Session (Password + Sequential Hostname)
         shell: pwsh
         env:
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
@@ -686,17 +876,21 @@ jobs:
           if (!(Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
           $tsExe = "C:\Program Files\Tailscale\tailscale.exe"
 
-          # 🎯 Hostname تسلسلي
           $runNum = $env:RUN_NUMBER
           if ([string]::IsNullOrEmpty($runNum)) { $runNum = "1" }
           $hostname = "rdp-alkshwly-$runNum"
+          $rdpUser = $hostname
+          if ($rdpUser.Length -gt 20) { $rdpUser = $rdpUser.Substring(0, 20) }
+          
+          $password = "${{ secrets.RDP_PASSWORD }}"
+          if ([string]::IsNullOrEmpty($password)) { $password = "admin@123" }
+
           Write-Host "🎯 Hostname: $hostname (run #$runNum)"
+          Write-Host "👤 RDP User: $rdpUser"
 
           $tailscaleIp = "N/A"
           $tailscaleStatus = "Not installed"
           $authUrl = ""
-          $rdpUser = "rdp-alkshwly-$runNum"
-          if ($rdpUser.Length -gt 20) { $rdpUser = $rdpUser.Substring(0, 20) }
 
           if (Test-Path $tsExe) {
               Write-Host "Starting Tailscale..."
@@ -705,8 +899,6 @@ jobs:
               $authKeyValid = (-not [string]::IsNullOrEmpty($authKey) -and $authKey.StartsWith("tskey-auth-"))
 
               if ($authKeyValid) {
-                  Write-Host "Attempting authkey connection..."
-                  # --ephemeral = auto-cleanup after disconnect (prevents stale nodes)
                   & $tsExe up --authkey $authKey --hostname=$hostname --accept-routes --ephemeral --reset 2>&1 | Out-Null
                   Start-Sleep -Seconds 10
 
@@ -722,11 +914,10 @@ jobs:
                               if ($tsData.Self -and $tsData.Self.TailscaleIPs -and $tsData.Self.TailscaleIPs.Count -gt 0) {
                                   $tailscaleIp = $tsData.Self.TailscaleIPs[0]
                               }
-                              Write-Host "✅ Tailscale connected via authkey: IP=$tailscaleIp"
+                              Write-Host "✅ Tailscale connected: IP=$tailscaleIp"
                               break
                           }
                           elseif ($tsData.BackendState -eq "NeedsLogin") {
-                              Write-Host "⚠️ Authkey failed (NeedsLogin) - falling back to AuthURL"
                               if ($tsData.AuthURL) { $authUrl = $tsData.AuthURL }
                               break
                           }
@@ -736,9 +927,7 @@ jobs:
                   }
               }
 
-              # Fallback: If authkey failed or not provided, generate AuthURL
               if ($tailscaleIp -eq "N/A" -and -not $authUrl) {
-                  Write-Host "Starting tailscale up (AuthURL mode)..."
                   Start-Process -FilePath $tsExe -ArgumentList @("up","--hostname=$hostname") -NoNewWindow -PassThru | Out-Null
                   Start-Sleep -Seconds 5
                   
@@ -749,21 +938,18 @@ jobs:
                           $tsData = $statusJson | ConvertFrom-Json -ErrorAction Stop
                           if ($tsData.AuthURL) { 
                               $authUrl = $tsData.AuthURL
-                              Write-Host "✅ AuthURL found: $authUrl"
                               break
                           }
                           if ($tsData.BackendState -eq "Running") {
                               if ($tsData.Self -and $tsData.Self.TailscaleIPs -and $tsData.Self.TailscaleIPs.Count -gt 0) {
                                   $tailscaleIp = $tsData.Self.TailscaleIPs[0]
                               }
-                              Write-Host "✅ Tailscale now running: IP=$tailscaleIp"
                               break
                           }
                       } catch { }
                   }
               }
 
-              # Fallback for IP extraction
               if ($tailscaleIp -eq "N/A") {
                   $tsIpLine = ipconfig | Select-String "100\.\d+\.\d+\.\d+" | Select-Object -First 1
                   if ($tsIpLine) { 
@@ -772,14 +958,12 @@ jobs:
                   }
               }
 
-              # Save raw JSON
               try {
                   $rawJson = & $tsExe status --json 2>&1 | Out-String
                   [System.IO.File]::WriteAllText("C:\Users\Public\tailscale_status.json", $rawJson.Trim(), [System.Text.Encoding]::UTF8)
               } catch {}
           }
 
-          # Session info
           $publicIp = try { (Invoke-RestMethod -Uri "https://api.ipify.org" -TimeoutSec 5) } catch { "N/A" }
           $now = Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC"
           
@@ -787,19 +971,15 @@ jobs:
               tailscaleIp=$tailscaleIp
               publicIp=$publicIp
               rdpUser=$rdpUser
+              rdpPassword=$password
               hostname=$hostname
               tailscaleStatus=$tailscaleStatus
               authUrl=$authUrl
               startTime=$now 
           } | ConvertTo-Json | Set-Content "C:\Users\Public\session_info.json" -Encoding UTF8
 
-          Write-Host "✅ Session info written"
-          Write-Host "  Hostname: $hostname"
-          Write-Host "  RDP User: $rdpUser"
-          Write-Host "  TS IP: $tailscaleIp"
-          Write-Host "  Status: $tailscaleStatus"
+          Write-Host "✅ Session info written (with password)"
 
-          # Discord webhook initial message
           $webhookUrl = "$env:DISCORD_WEBHOOK_URL"
           if ($webhookUrl) {
               $nl = "`n"
@@ -809,6 +989,7 @@ jobs:
                      "🔗 **Tailscale IP:** ``$tailscaleIp``$nl" +
                      "🌐 **Public IP:** ``$publicIp``$nl" +
                      "👤 **RDP User:** ``$rdpUser``$nl" +
+                     "🔑 **Password:** ``$password``$nl" +
                      "📡 **Status:** $tailscaleStatus$nl" +
                      "━━━━━━━━━━━━━━━━━━━━━$nl"
               if ($authUrl) {
