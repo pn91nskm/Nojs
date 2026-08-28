@@ -67,7 +67,7 @@ jobs:
         run: |
           cd C:\Users\Public
           npm init -y
-          npm install telegram discord.js
+          npm install telegram@2.26.22 discord.js@14.16.3
           Write-Host "Node packages installed"
 
       - name: Create Backup Script
@@ -191,7 +191,227 @@ jobs:
           Set-Content -Path "C:\Users\Public\backup.ps1" -Value $script -Encoding UTF8 -Force
           Write-Host "Backup script created"
 
-      - name: Create Discord Bot Script (Direct Upload Embedded)
+      - name: Create Unified MTProto Notifier
+        shell: pwsh
+        run: |
+          $notifierScript = @'
+          /**
+           * notifier.js - Unified MTProto Notification Service
+           * Uses GramJS (MTProto 2.0) for direct Telegram DC connection
+           * Replaces all curl/Bot API calls with a single reliable connection
+           */
+          const { TelegramClient } = require('telegram');
+          const { StringSession } = require('telegram/sessions');
+          const fs = require('fs');
+          const path = require('path');
+
+          const SESSION_FILE = 'C:\\Users\\Public\\tg_session.dat';
+          const MAX_RETRIES  = 3;
+          const DELAYS       = [2000, 4000, 8000];
+
+          function loadSession() {
+            try {
+              if (fs.existsSync(SESSION_FILE)) {
+                const data = fs.readFileSync(SESSION_FILE, 'utf8').trim();
+                if (data && data.length > 10) return data;
+              }
+            } catch (_) {}
+            return '';
+          }
+
+          function saveSession(sessionString) {
+            try {
+              if (sessionString && sessionString.length > 10) {
+                fs.writeFileSync(SESSION_FILE, sessionString, 'utf8');
+              }
+            } catch (_) {}
+          }
+
+          async function createClient() {
+            const apiId     = parseInt(process.env.TELEGRAM_API_ID);
+            const apiHash   = process.env.TELEGRAM_API_HASH;
+            const botToken  = process.env.TELEGRAM_BOT_TOKEN;
+
+            if (!apiId || !apiHash || !botToken) {
+              console.error('[TG-NOTIFY] Missing TELEGRAM_API_ID, TELEGRAM_API_HASH, or TELEGRAM_BOT_TOKEN');
+              process.exit(1);
+            }
+
+            const session = new StringSession(loadSession());
+            const client = new TelegramClient(session, apiId, apiHash, {
+              connectionRetries: 5,
+              deviceModel: 'RDP-ULTRA-STATION',
+              systemVersion: '1.0',
+              appVersion: '2.0.0'
+            });
+
+            await client.start({ botAuthToken: botToken });
+            saveSession(client.session.save());
+            console.log('[TG-NOTIFY] MTProto connection established');
+            return client;
+          }
+
+          async function resolveEntity(client, channelId) {
+            if (!channelId) {
+              throw new Error('TELEGRAM_CHANNEL_ID is empty');
+            }
+
+            // Attempt 1: Direct resolution (handles @username and -100...)
+            try {
+              const entity = await client.getEntity(channelId);
+              console.log('[TG-NOTIFY] Entity resolved directly:', entity.title || channelId);
+              return entity;
+            } catch (err) {
+              console.log('[TG-NOTIFY] Direct resolution failed:', err.errorMessage || err.message);
+            }
+
+            // Attempt 2: If pure numeric, add -100 prefix
+            if (/^\d+$/.test(channelId)) {
+              try {
+                const entity = await client.getEntity('-100' + channelId);
+                console.log('[TG-NOTIFY] Entity resolved with -100 prefix');
+                return entity;
+              } catch (err) {
+                console.log('[TG-NOTIFY] -100 prefix resolution failed:', err.errorMessage || err.message);
+              }
+            }
+
+            // Attempt 3: If starts with -100, try removing and re-adding
+            if (channelId.startsWith('-100')) {
+              try {
+                const entity = await client.getEntity(channelId);
+                return entity;
+              } catch (_) {}
+            }
+
+            throw new Error('Could not resolve Telegram entity: ' + channelId);
+          }
+
+          async function sendMessageWithRetry(client, entity, htmlText, maxRetries) {
+            const retries = maxRetries || MAX_RETRIES;
+            for (let i = 0; i < retries; i++) {
+              try {
+                await client.sendMessage(entity, {
+                  message: htmlText,
+                  parseMode: 'html',
+                  linkPreview: false
+                });
+                console.log('[TG-NOTIFY] Message sent successfully (attempt ' + (i + 1) + ')');
+                return true;
+              } catch (err) {
+                const errMsg = err.errorMessage || err.message || String(err);
+                console.error('[TG-NOTIFY] Attempt ' + (i + 1) + ' failed:', errMsg);
+
+                // Handle FLOOD_WAIT (rate limiting)
+                if (errMsg.includes('FLOOD_WAIT')) {
+                  const waitMatch = errMsg.match(/(\d+)/);
+                  const waitSec = waitMatch ? parseInt(waitMatch[1]) : 30;
+                  console.log('[TG-NOTIFY] FLOOD_WAIT - waiting ' + waitSec + 's');
+                  await new Promise(function(r) { setTimeout(r, waitSec * 1000); });
+                  continue;
+                }
+
+                // Handle CHANNEL_INVALID (re-resolve entity)
+                if (errMsg.includes('CHANNEL_INVALID') || errMsg.includes('PEER_ID_INVALID')) {
+                  console.log('[TG-NOTIFY] Channel invalid - will retry with fresh resolution');
+                }
+
+                if (i < retries - 1) {
+                  console.log('[TG-NOTIFY] Waiting ' + DELAYS[i] + 'ms before retry...');
+                  await new Promise(function(r) { setTimeout(r, DELAYS[i]); });
+                }
+              }
+            }
+            return false;
+          }
+
+          async function main() {
+            const args = process.argv.slice(2);
+            const msgIdx = args.indexOf('--message');
+            const fileIdx = args.indexOf('--file');
+            const captionIdx = args.indexOf('--caption');
+
+            const message = msgIdx !== -1 ? args[msgIdx + 1] : null;
+            const filePath = fileIdx !== -1 ? args[fileIdx + 1] : null;
+            const caption = captionIdx !== -1 ? args[captionIdx + 1] : '';
+            const channelId = process.env.TELEGRAM_CHANNEL_ID;
+
+            if (!message && !filePath) {
+              console.error('[TG-NOTIFY] Usage: node notifier.js --message "text" OR --file "path" --caption "text"');
+              process.exit(1);
+            }
+
+            if (!channelId) {
+              console.error('[TG-NOTIFY] TELEGRAM_CHANNEL_ID not set');
+              process.exit(1);
+            }
+
+            let client = null;
+            try {
+              client = await createClient();
+              const entity = await resolveEntity(client, channelId);
+
+              if (message) {
+                const success = await sendMessageWithRetry(client, entity, message);
+                if (!success) {
+                  console.error('[TG-NOTIFY] Failed to send message after ' + MAX_RETRIES + ' attempts');
+                  process.exit(1);
+                }
+              }
+
+              if (filePath && fs.existsSync(filePath)) {
+                const fileName = path.basename(filePath);
+                console.log('[TG-NOTIFY] Uploading file:', fileName);
+                let uploaded = false;
+                for (let i = 0; i < MAX_RETRIES; i++) {
+                  try {
+                    await client.sendFile(entity, {
+                      file: filePath,
+                      caption: caption || fileName,
+                      forceDocument: true,
+                      fileName: fileName,
+                      workers: 4,
+                      parseMode: 'html'
+                    });
+                    console.log('[TG-NOTIFY] File uploaded:', fileName);
+                    uploaded = true;
+                    break;
+                  } catch (err) {
+                    const errMsg = err.errorMessage || err.message || '';
+                    console.error('[TG-NOTIFY] File upload attempt ' + (i + 1) + ' failed:', errMsg);
+                    if (errMsg.includes('FLOOD_WAIT')) {
+                      const waitMatch = errMsg.match(/(\d+)/);
+                      const waitSec = waitMatch ? parseInt(waitMatch[1]) : 30;
+                      await new Promise(function(r) { setTimeout(r, waitSec * 1000); });
+                    } else if (i < MAX_RETRIES - 1) {
+                      await new Promise(function(r) { setTimeout(r, DELAYS[i]); });
+                    }
+                  }
+                }
+                if (!uploaded) {
+                  console.error('[TG-NOTIFY] File upload failed after retries');
+                  process.exit(1);
+                }
+              }
+
+              console.log('[TG-NOTIFY] All operations completed successfully');
+              process.exit(0);
+            } catch (err) {
+              console.error('[TG-NOTIFY] Fatal error:', err.errorMessage || err.message || err);
+              process.exit(1);
+            } finally {
+              if (client) {
+                try { await client.disconnect(); } catch (_) {}
+              }
+            }
+          }
+
+          main();
+          '@
+          Set-Content -Path "C:\Users\Public\notifier.js" -Value $notifierScript -Encoding UTF8 -Force
+          Write-Host "Unified MTProto notifier created"
+
+      - name: Create Discord Bot Script (MTProto Unified)
         shell: pwsh
         run: |
           $botDir = "C:\Users\Public\bot"
@@ -199,157 +419,55 @@ jobs:
           $packageJson = @'
           {
             "name": "rdp-backup-bot",
-            "version": "1.0.0",
+            "version": "3.0.0",
             "private": true,
             "main": "index.js",
             "dependencies": {
-              "discord.js": "^14.0.0",
-              "telegram": "^2.0.0"
+              "discord.js": "^14.16.3",
+              "telegram": "^2.26.22"
             }
           }
           '@
           Set-Content -Path "$botDir\package.json" -Value $packageJson -Encoding UTF8 -Force
           $botScript = @'
+          /**
+           * RDP Ultra Station Bot v3.0
+           * - Discord: Interactive control panel (buttons, commands, live status)
+           * - Telegram: MTProto notifications + file uploads via shared notifier
+           * - Features: Tailscale restart, retry logic, timeout alerts
+           */
           const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
+          const { TelegramClient } = require('telegram');
+          const { StringSession } = require('telegram/sessions');
           const { execSync, spawn } = require('child_process');
           const fs = require('fs');
           const path = require('path');
 
-          const BOT_TOKEN     = process.env.DISCORD_BOT_TOKEN;
-          const CHANNEL_ID    = process.env.DISCORD_CHANNEL_ID;
-          const LOCK_FILE     = 'C:\\session_active.lock';
-          const BACKUP_SCRIPT = 'C:\\Users\\Public\\backup.ps1';
-          const UPLOAD_INLINE_PATH = 'C:\\Users\\Public\\bot\\_inline_upload.js';
+          // ====== Configuration ======
+          const BOT_TOKEN          = process.env.DISCORD_BOT_TOKEN;
+          const CHANNEL_ID         = process.env.DISCORD_CHANNEL_ID;
+          const LOCK_FILE          = 'C:\\session_active.lock';
+          const BACKUP_SCRIPT      = 'C:\\Users\\Public\\backup.ps1';
+          const NOTIFIER_SCRIPT    = 'C:\\Users\\Public\\notifier.js';
+          const SESSION_FILE       = 'C:\\Users\\Public\\tg_session.dat';
+          const TELEGRAM_API_ID    = parseInt(process.env.TELEGRAM_API_ID);
+          const TELEGRAM_API_HASH  = process.env.TELEGRAM_API_HASH;
+          const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+          const TELEGRAM_CHANNEL   = process.env.TELEGRAM_CHANNEL_ID;
+          const TAILSCALE_AUTHKEY  = process.env.TAILSCALE_AUTHKEY;
 
-          const UPLOAD_CODE = [
-            "const { TelegramClient, Api } = require('telegram');",
-            "const { StringSession } = require('telegram/sessions');",
-            "const fs = require('fs');",
-            "const path = require('path');",
-            "",
-            "const apiId     = parseInt(process.env.TELEGRAM_API_ID);",
-            "const apiHash   = process.env.TELEGRAM_API_HASH;",
-            "const botToken  = process.env.TELEGRAM_BOT_TOKEN;",
-            "const channelId = process.env.TELEGRAM_CHANNEL_ID;",
-            "const manifestPath = path.join(process.env.TEMP || process.env.TMP, 'backup_output', 'backup_manifest.json');",
-            "",
-            "if (!apiId || !apiHash || !botToken || !channelId) {",
-            "  console.error('[TG] Missing required secrets: TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID');",
-            "  process.exit(1);",
-            "}",
-            "",
-            "if (!fs.existsSync(manifestPath)) {",
-            "  console.error('[TG] Manifest not found at:', manifestPath);",
-            "  process.exit(1);",
-            "}",
-            "",
-            "const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));",
-            "",
-            "if (!manifest.Success || !manifest.Files || manifest.Files.length === 0) {",
-            "  const msg = manifest.Message || 'No folders found matching patterns';",
-            "  console.log('[TG] Nothing to upload:', msg);",
-            "  process.exit(0);",
-            "}",
-            "",
-            "console.log('[TG] Files to upload:', manifest.Count);",
-            "manifest.Files.forEach((f, i) => console.log('  ' + (i+1) + '. ' + f.Name + ' (' + f.SizeMB + ' MB) - ' + f.Folder));",
-            "",
-            "let uploadDone = false;",
-            "",
-            "(async () => {",
-            "  const client = new TelegramClient(new StringSession(''), apiId, apiHash, {",
-            "    connectionRetries: 5",
-            "  });",
-            "",
-            "  await client.start({ botAuthToken: botToken });",
-            "  console.log('[TG] Connected to Telegram as bot');",
-            "",
-            "  let entity = null;",
-            "",
-            "  if (channelId.startsWith('@')) {",
-            "    console.log('[TG] Using channel username:', channelId);",
-            "    entity = channelId;",
-            "  } else {",
-            "    const cleanId = parseInt(channelId.replace(/^-100/, ''));",
-            "    console.log('[TG] Resolving numeric channel ID:', cleanId);",
-            "    try {",
-            "      const result = await client.invoke(",
-            "        new Api.channels.GetChannels({",
-            "          id: [new Api.InputChannel({ channelId: BigInt(cleanId), accessHash: BigInt(0) })]",
-            "        })",
-            "      );",
-            "      if (result.chats && result.chats.length > 0) {",
-            "        entity = result.chats[0];",
-            "        console.log('[TG] Channel resolved:', entity.title);",
-            "      }",
-            "    } catch (err) {",
-            "      console.log('[TG] GetChannels failed:', err.errorMessage || err.message);",
-            "      console.log('[TG] Trying InputPeerChannel fallback...');",
-            "      entity = new Api.InputPeerChannel({ channelId: BigInt(cleanId), accessHash: BigInt(0) });",
-            "    }",
-            "  }",
-            "",
-            "  if (!entity) { console.error('[TG] Could not resolve channel entity'); process.exit(1); }",
-            "",
-            "  let success = 0, failed = 0;",
-            "",
-            "  for (const file of manifest.Files) {",
-            "    if (!fs.existsSync(file.Path)) {",
-            "      console.error('[TG] File not found:', file.Path);",
-            "      failed++;",
-            "      continue;",
-            "    }",
-            "    try {",
-            "      const ts      = new Date().toISOString().replace(/[:.]/g, '-');",
-            "      const sizeMB  = (file.Size / 1048576).toFixed(2);",
-            "      const caption = [",
-            "        'Backup: ' + file.Folder,",
-            "        'File: '   + file.Name,",
-            "        'Size: '   + sizeMB + ' MB',",
-            "        'Date: '   + ts,",
-            "        'Source: RDP_ULTRA_STATION'",
-            "      ].join('\\n');",
-            "      console.log('[TG] Uploading:', file.Name, '(' + sizeMB + ' MB)...');",
-            "      await client.sendFile(entity, {",
-            "        file: file.Path,",
-            "        caption: caption,",
-            "        forceDocument: true,",
-            "        fileName: file.Name,",
-            "        workers: 4",
-            "      });",
-            "      console.log('[TG] Uploaded:', file.Name);",
-            "      success++;",
-            "      try { fs.unlinkSync(file.Path); } catch (_) {}",
-            "    } catch (err) {",
-            "      console.error('[TG] Failed:', file.Name, '-', err.errorMessage || err.message);",
-            "      failed++;",
-            "    }",
-            "  }",
-            "",
-            "  uploadDone = true;",
-            "  console.log('[TG] RESULT: ' + success + ' ok, ' + failed + ' failed');",
-            "",
-            "  setTimeout(async () => {",
-            "    try { await client.disconnect(); } catch (_) {}",
-            "    process.exit(failed > 0 ? 1 : 0);",
-            "  }, 3000);",
-            "",
-            "})().catch(err => {",
-            "  const msg = err.errorMessage || err.message || String(err);",
-            "  if (uploadDone || msg === 'TIMEOUT') {",
-            "    console.log('[TG] Upload succeeded, ignoring background timeout');",
-            "    process.exit(0);",
-            "  }",
-            "  console.error('[TG] Telegram error:', msg);",
-            "  process.exit(1);",
-            "});"
-          ].join('\n');
+          // ====== Timeout Alert System (Suggestion #5) ======
+          const WORKFLOW_START   = Date.now();
+          const WORKFLOW_TIMEOUT = 360 * 60 * 1000;
+          const ALERT_THRESHOLDS = [10 * 60 * 1000, 5 * 60 * 1000, 1 * 60 * 1000];
+          const firedAlerts      = new Set();
 
           if (!BOT_TOKEN || !CHANNEL_ID) {
             console.error('FATAL: DISCORD_BOT_TOKEN or DISCORD_CHANNEL_ID missing');
             process.exit(1);
           }
 
+          // ====== State Management ======
           let state          = 'IDLE';
           let currentProc    = null;
           let currentPhase   = 'IDLE';
@@ -357,6 +475,9 @@ jobs:
           let lastResult     = 'None';
           let controlMessage = null;
           let logLines       = [];
+          let tgClient       = null;
+          let tgEntity       = null;
+          let tailscaleIp    = 'N/A';
 
           const client = new Client({
             intents: [
@@ -366,45 +487,138 @@ jobs:
             ]
           });
 
+          // ====== MTProto Connection (Shared) ======
+          async function initTelegram() {
+            if (!TELEGRAM_API_ID || !TELEGRAM_API_HASH || !TELEGRAM_BOT_TOKEN || !TELEGRAM_CHANNEL) {
+              console.log('[TG] Telegram credentials incomplete - notifications disabled');
+              return;
+            }
+            try {
+              let sessionData = '';
+              try {
+                if (fs.existsSync(SESSION_FILE)) {
+                  sessionData = fs.readFileSync(SESSION_FILE, 'utf8').trim();
+                }
+              } catch (_) {}
+
+              tgClient = new TelegramClient(
+                new StringSession(sessionData),
+                TELEGRAM_API_ID,
+                TELEGRAM_API_HASH,
+                { connectionRetries: 5, deviceModel: 'RDP-ULTRA-STATION' }
+              );
+              await tgClient.start({ botAuthToken: TELEGRAM_BOT_TOKEN });
+
+              try {
+                fs.writeFileSync(SESSION_FILE, tgClient.session.save(), 'utf8');
+              } catch (_) {}
+
+              // Resolve entity with fallbacks
+              try {
+                tgEntity = await tgClient.getEntity(TELEGRAM_CHANNEL);
+              } catch (_) {
+                if (/^\d+$/.test(TELEGRAM_CHANNEL)) {
+                  tgEntity = await tgClient.getEntity('-100' + TELEGRAM_CHANNEL);
+                } else {
+                  throw new Error('Entity resolution failed');
+                }
+              }
+
+              console.log('[TG] MTProto connected - entity resolved');
+            } catch (err) {
+              console.error('[TG] Init failed:', err.errorMessage || err.message);
+              tgClient = null;
+              tgEntity = null;
+            }
+          }
+
+          // ====== Send Telegram Message with Retry (Suggestion #4) ======
+          async function sendTelegramMsg(htmlText, maxRetries) {
+            if (!tgClient || !tgEntity) return false;
+            const retries = maxRetries || 3;
+            const delays = [2000, 4000, 8000];
+            for (let i = 0; i < retries; i++) {
+              try {
+                await tgClient.sendMessage(tgEntity, {
+                  message: htmlText,
+                  parseMode: 'html',
+                  linkPreview: false
+                });
+                return true;
+              } catch (err) {
+                const msg = err.errorMessage || err.message || '';
+                console.error('[TG] Send attempt ' + (i + 1) + ' failed:', msg);
+                if (msg.includes('FLOOD_WAIT')) {
+                  const wait = parseInt((msg.match(/\d+/) || ['30'])[0]);
+                  await new Promise(function(r) { setTimeout(r, wait * 1000); });
+                  continue;
+                }
+                if (i < retries - 1) {
+                  await new Promise(function(r) { setTimeout(r, delays[i]); });
+                }
+              }
+            }
+            return false;
+          }
+
+          // ====== Notify All Services (Discord + Telegram) ======
+          async function notifyAll(text, discordContent) {
+            await sendTelegramMsg(text);
+            if (controlMessage && controlMessage.channel) {
+              try {
+                await controlMessage.channel.send(discordContent || text.replace(/<[^>]*>/g, ''));
+              } catch (_) {}
+            }
+          }
+
+          // ====== Logging ======
           function addLog(line) {
             const ts = new Date().toLocaleTimeString();
-            logLines.push(`\`${ts}\` ${line}`);
+            logLines.push('`' + ts + '` ' + line);
             if (logLines.length > 8) logLines = logLines.slice(-8);
           }
 
+          // ====== Embed Builder ======
           function buildEmbed() {
-            const stateEmoji = { IDLE: '⏸️', COMPRESSING: '🗜️', UPLOADING: '☁️', CANCELLING: '🛑' };
-            const stateLabel = { IDLE: 'Idle', COMPRESSING: 'Compressing...', UPLOADING: 'Uploading to Telegram...', CANCELLING: 'Cancelling...' };
-            const colors     = { IDLE: 0x99AAB5, COMPRESSING: 0xFFA500, UPLOADING: 0x3498DB, CANCELLING: 0xE74C3C };
+            const stateEmoji = { IDLE: '⏸️', COMPRESSING: '🗜️', UPLOADING: '☁️', CANCELLING: '🛑', RESTARTING: '🔄' };
+            const stateLabel = { IDLE: 'Idle', COMPRESSING: 'Compressing...', UPLOADING: 'Uploading...', CANCELLING: 'Cancelling...', RESTARTING: 'Restarting Tailscale...' };
+            const colors     = { IDLE: 0x99AAB5, COMPRESSING: 0xFFA500, UPLOADING: 0x3498DB, CANCELLING: 0xE74C3C, RESTARTING: 0x9B59B6 };
             const logText    = logLines.length > 0 ? logLines.join('\n') : '_No activity yet_';
-            const embed = new EmbedBuilder()
-              .setTitle('🖥️ RDP Backup Control')
+            const elapsed    = Math.floor((Date.now() - WORKFLOW_START) / 60000);
+            const remaining  = Math.max(0, 360 - elapsed);
+
+            return new EmbedBuilder()
+              .setTitle('🖥️ RDP Ultra Station Control')
               .setColor(colors[state] || 0x99AAB5)
               .addFields(
                 { name: 'Status',          value: (stateEmoji[state] || '⏸️') + ' ' + (stateLabel[state] || 'Idle'), inline: true },
                 { name: 'Phase',           value: currentPhase, inline: true },
-                { name: 'Saves Completed', value: String(saveCount), inline: true },
+                { name: 'Saves',           value: String(saveCount), inline: true },
+                { name: 'Remaining',       value: remaining + ' min', inline: true },
+                { name: 'Tailscale IP',    value: '`' + tailscaleIp + '`', inline: true },
                 { name: 'Last Result',     value: lastResult, inline: false },
-                { name: 'Log',             value: logText,    inline: false }
+                { name: 'Activity Log',    value: logText, inline: false }
               )
               .setTimestamp();
-            return embed;
           }
 
           function buildButtons() {
-            const row = new ActionRowBuilder().addComponents(
+            return [new ActionRowBuilder().addComponents(
               new ButtonBuilder().setCustomId('btn_save').setLabel('Save').setEmoji('💾').setStyle(ButtonStyle.Primary).setDisabled(state !== 'IDLE'),
               new ButtonBuilder().setCustomId('btn_cancel').setLabel('Cancel').setEmoji('🛑').setStyle(ButtonStyle.Danger).setDisabled(state === 'IDLE' || state === 'CANCELLING'),
+              new ButtonBuilder().setCustomId('btn_restart_ts').setLabel('Restart Tailscale').setEmoji('🔄').setStyle(ButtonStyle.Secondary).setDisabled(state !== 'IDLE'),
               new ButtonBuilder().setCustomId('btn_status').setLabel('Status').setEmoji('📊').setStyle(ButtonStyle.Secondary).setDisabled(false)
-            );
-            return [row];
+            )];
           }
 
           async function updatePanel() {
             if (!controlMessage) return;
-            try { await controlMessage.edit({ embeds: [buildEmbed()], components: buildButtons() }); } catch (_) {}
+            try {
+              await controlMessage.edit({ embeds: [buildEmbed()], components: buildButtons() });
+            } catch (_) {}
           }
 
+          // ====== Process Management ======
           function killProcessTree(pid) {
             try { execSync('taskkill /PID ' + pid + ' /T /F', { stdio: 'ignore' }); } catch (_) {}
           }
@@ -415,75 +629,190 @@ jobs:
               const outputDir = path.join(tempDir, 'backup_output');
               const workDir   = path.join(tempDir, 'backup_work');
               if (fs.existsSync(outputDir)) {
-                fs.readdirSync(outputDir).forEach(f => { try { fs.unlinkSync(path.join(outputDir, f)); } catch (_) {} });
+                fs.readdirSync(outputDir).forEach(function(f) {
+                  try { fs.unlinkSync(path.join(outputDir, f)); } catch (_) {}
+                });
               }
-              if (fs.existsSync(workDir)) { fs.rmSync(workDir, { recursive: true, force: true }); }
+              if (fs.existsSync(workDir)) {
+                fs.rmSync(workDir, { recursive: true, force: true });
+              }
             } catch (_) {}
           }
 
-          async function killAll() {
-            if (state === 'IDLE') { lastResult = 'No operation running'; await updatePanel(); return; }
-            if (state === 'CANCELLING') return;
-            state = 'CANCELLING'; await updatePanel();
-            if (currentProc && currentProc.pid) killProcessTree(currentProc.pid);
-            try { execSync('taskkill /IM robocopy.exe /F', { stdio: 'ignore' }); } catch (_) {}
-            cleanupTempFiles();
-            currentProc = null; currentPhase = 'IDLE'; state = 'IDLE';
-            addLog('🛑 Cancelled by user');
-            lastResult = '🛑 Cancelled by user';
+          // ====== Tailscale Restart (Suggestion #3) ======
+          async function restartTailscale() {
+            if (state !== 'IDLE') {
+              lastResult = '⚠️ Cannot restart while busy';
+              await updatePanel();
+              return;
+            }
+
+            state = 'RESTARTING';
+            currentPhase = 'Restarting Tailscale';
+            addLog('🔄 Tailscale restart initiated');
+            await updatePanel();
+            await sendTelegramMsg('🔄 <b>Tailscale Restart</b> initiated...');
+
+            const tsExe = 'C:\\Program Files\\Tailscale\\tailscale.exe';
+            if (!TAILSCALE_AUTHKEY) {
+              addLog('❌ TAILSCALE_AUTHKEY missing');
+              lastResult = '❌ TAILSCALE_AUTHKEY not set';
+              state = 'IDLE'; currentPhase = 'IDLE';
+              await updatePanel();
+              await sendTelegramMsg('❌ <b>Tailscale Restart Failed</b>: AUTHKEY missing');
+              return;
+            }
+
+            try {
+              // Step 1: Logout
+              try {
+                execSync('"' + tsExe + '" logout', { stdio: 'ignore', timeout: 30000 });
+                addLog('✓ Tailscale logged out');
+              } catch (_) {
+                addLog('⚠️ Logout skipped (non-fatal)');
+              }
+
+              // Step 2: Re-authenticate with reset
+              execSync('"' + tsExe + '" up --authkey=' + TAILSCALE_AUTHKEY + ' --hostname=RDP-STATION --accept-routes --reset', {
+                stdio: 'ignore',
+                timeout: 60000
+              });
+              addLog('✓ Tailscale re-authenticated');
+
+              // Step 3: Wait for IP assignment (polling)
+              let newIp = null;
+              for (let i = 0; i < 15; i++) {
+                await new Promise(function(r) { setTimeout(r, 2000); });
+                try {
+                  const statusJson = execSync('"' + tsExe + '" status --json', { encoding: 'utf8' });
+                  const tsData = JSON.parse(statusJson);
+                  if (tsData && tsData.Self && tsData.Self.TailscaleIPs && tsData.Self.TailscaleIPs.length > 0) {
+                    newIp = tsData.Self.TailscaleIPs[0];
+                    break;
+                  }
+                } catch (_) {}
+              }
+
+              if (newIp) {
+                tailscaleIp = newIp;
+                addLog('✅ New Tailscale IP: ' + newIp);
+                lastResult = '✅ Tailscale restarted - IP: ' + newIp;
+                await sendTelegramMsg(
+                  '🔄 <b>Tailscale Restarted</b>\n' +
+                  '━━━━━━━━━━━━━━━━━━━━━\n' +
+                  '🔗 <b>New IP:</b> <code>' + newIp + '</code>\n' +
+                  '🕐 <b>Time:</b> ' + new Date().toLocaleTimeString() + '\n' +
+                  'Connect: <code>mstsc /v:' + newIp + '</code>'
+                );
+              } else {
+                addLog('⚠️ Restarted, IP pending...');
+                lastResult = '⚠️ Tailscale restarted, awaiting IP';
+                await sendTelegramMsg('🔄 <b>Tailscale Restarted</b>\n⚠️ IP assignment pending');
+              }
+            } catch (err) {
+              addLog('❌ Restart failed: ' + err.message);
+              lastResult = '❌ Restart failed: ' + err.message;
+              await sendTelegramMsg('❌ <b>Tailscale Restart Failed</b>\n' + err.message);
+            }
+
+            state = 'IDLE';
+            currentPhase = 'IDLE';
             await updatePanel();
           }
 
-          function pipeLog(proc, prefix) {
-            proc.stdout && proc.stdout.on('data', d => {
-              String(d).split('\n').filter(l => l.trim()).forEach(l => {
-                console.log(prefix, l);
-                addLog(l.trim().substring(0, 80));
-                updatePanel().catch(() => {});
-              });
-            });
-            proc.stderr && proc.stderr.on('data', d => {
-              String(d).split('\n').filter(l => l.trim()).forEach(l => {
-                console.error(prefix, l);
-                addLog('⚠️ ' + l.trim().substring(0, 77));
-                updatePanel().catch(() => {});
-              });
-            });
+          // ====== Cancel Operation ======
+          async function killAll() {
+            if (state === 'IDLE') {
+              lastResult = 'No operation running';
+              await updatePanel();
+              return;
+            }
+            if (state === 'CANCELLING') return;
+
+            state = 'CANCELLING';
+            await updatePanel();
+
+            if (currentProc && currentProc.pid) killProcessTree(currentProc.pid);
+            try { execSync('taskkill /IM robocopy.exe /F', { stdio: 'ignore' }); } catch (_) {}
+            cleanupTempFiles();
+
+            currentProc = null;
+            currentPhase = 'IDLE';
+            state = 'IDLE';
+            addLog('🛑 Cancelled by user');
+            lastResult = '🛑 Cancelled by user';
+            await updatePanel();
+            await notifyAll('🛑 <b>Operation Cancelled</b> by user', '🛑 **Operation Cancelled** by user');
           }
 
+          // ====== Log Piping ======
+          function pipeLog(proc, prefix) {
+            if (proc.stdout) {
+              proc.stdout.on('data', function(d) {
+                String(d).split('\n').filter(function(l) { return l.trim(); }).forEach(function(l) {
+                  console.log(prefix, l);
+                  addLog(l.trim().substring(0, 80));
+                  updatePanel().catch(function() {});
+                });
+              });
+            }
+            if (proc.stderr) {
+              proc.stderr.on('data', function(d) {
+                String(d).split('\n').filter(function(l) { return l.trim(); }).forEach(function(l) {
+                  console.error(prefix, l);
+                  addLog('⚠️ ' + l.trim().substring(0, 77));
+                  updatePanel().catch(function() {});
+                });
+              });
+            }
+          }
+
+          // ====== Backup + Upload Pipeline ======
           function runBackup() {
-            if (state !== 'IDLE') { console.log('Backup ignored - state is', state); return; }
-            state = 'COMPRESSING'; currentPhase = 'Compressing';
+            if (state !== 'IDLE') {
+              console.log('Backup ignored - state is', state);
+              return;
+            }
+
+            state = 'COMPRESSING';
+            currentPhase = 'Compressing';
             addLog('🗜️ Starting backup...');
             updatePanel();
+            sendTelegramMsg('🗜️ <b>Backup Started</b> - Compressing files...');
 
             const backupProc = spawn('pwsh', ['-ExecutionPolicy', 'Bypass', '-File', BACKUP_SCRIPT], {
-              stdio: 'pipe', windowsHide: true
+              stdio: 'pipe',
+              windowsHide: true
             });
             currentProc = backupProc;
             pipeLog(backupProc, '[BACKUP]');
 
-            const backupTimeout = setTimeout(() => {
+            // Backup timeout: 10 minutes
+            const backupTimeout = setTimeout(function() {
               if (currentProc === backupProc && state === 'COMPRESSING') {
                 killProcessTree(backupProc.pid);
                 state = 'IDLE'; currentPhase = 'IDLE'; currentProc = null;
                 addLog('❌ Backup timeout (10 min)');
                 lastResult = '❌ Backup timeout (10 min)';
                 updatePanel();
+                sendTelegramMsg('❌ <b>Backup Timeout</b> (10 min limit exceeded)');
               }
             }, 600000);
 
-            backupProc.on('close', (code) => {
+            backupProc.on('close', function(code) {
               clearTimeout(backupTimeout);
               if (state === 'CANCELLING') return;
+
               if (code !== 0) {
                 state = 'IDLE'; currentPhase = 'IDLE'; currentProc = null;
                 addLog('❌ Backup failed (exit ' + code + ')');
                 lastResult = '❌ Backup failed (exit ' + code + ')';
-                updatePanel(); return;
+                updatePanel();
+                sendTelegramMsg('❌ <b>Backup Failed</b> (exit code: ' + code + ')');
+                return;
               }
 
-              // فحص الـ manifest قبل الرفع
+              // Check manifest
               const tempDir      = process.env.TEMP || process.env.TMP;
               const manifestPath = path.join(tempDir, 'backup_output', 'backup_manifest.json');
               if (fs.existsSync(manifestPath)) {
@@ -494,96 +823,193 @@ jobs:
                     state = 'IDLE'; currentPhase = 'IDLE'; currentProc = null;
                     addLog('ℹ️ ' + msg);
                     lastResult = 'ℹ️ ' + msg;
-                    updatePanel(); return;
+                    updatePanel();
+                    sendTelegramMsg('ℹ️ ' + msg);
+                    return;
                   }
                   addLog('📦 Found ' + manifest.Count + ' zip(s) to upload');
                 } catch (_) {}
               }
 
-              state = 'UPLOADING'; currentPhase = 'Uploading to Telegram';
+              // Start upload phase
+              state = 'UPLOADING';
+              currentPhase = 'Uploading to Telegram';
               addLog('☁️ Starting Telegram upload...');
               updatePanel();
+              sendTelegramMsg('☁️ <b>Telegram Upload Started</b>');
 
-              try { fs.writeFileSync(UPLOAD_INLINE_PATH, UPLOAD_CODE, 'utf8'); } catch (e) {
-                state = 'IDLE'; currentPhase = 'IDLE'; currentProc = null;
-                addLog('❌ Failed to write upload script');
-                lastResult = '❌ Failed to write upload script'; updatePanel(); return;
-              }
-
-              const uploadProc = spawn('node', [UPLOAD_INLINE_PATH], {
-                stdio: 'pipe', windowsHide: true,
+              // Use the unified notifier for uploads
+              const uploadProc = spawn('node', [
+                NOTIFIER_SCRIPT,
+                '--message', '☁️ <b>Upload in progress...</b>'
+              ], {
+                stdio: 'pipe',
+                windowsHide: true,
                 cwd: 'C:\\Users\\Public',
-                env: { ...process.env }
+                env: Object.assign({}, process.env)
               });
-              currentProc = uploadProc;
-              pipeLog(uploadProc, '[UPLOAD]');
 
-              const uploadTimeout = setTimeout(() => {
-                if (currentProc === uploadProc && state === 'UPLOADING') {
-                  killProcessTree(uploadProc.pid);
+              // Actually run the real upload via backup manifest
+              const realUploadProc = spawn('pwsh', ['-ExecutionPolicy', 'Bypass', '-Command',
+                '$manifest = Get-Content "$env:TEMP\\backup_output\\backup_manifest.json" -Raw | ConvertFrom-Json; ' +
+                'foreach ($f in $manifest.Files) { ' +
+                '  if (Test-Path $f.Path) { ' +
+                '    node C:\\Users\\Public\\notifier.js --file $f.Path --caption ("Backup: " + $f.Folder + " | Size: " + $f.SizeMB + " MB"); ' +
+                '    if ($LASTEXITCODE -eq 0) { Remove-Item $f.Path -Force -ErrorAction SilentlyContinue } ' +
+                '  } ' +
+                '}'
+              ], {
+                stdio: 'pipe',
+                windowsHide: true,
+                cwd: 'C:\\Users\\Public',
+                env: Object.assign({}, process.env)
+              });
+
+              currentProc = realUploadProc;
+              pipeLog(realUploadProc, '[UPLOAD]');
+
+              // Upload timeout: 15 minutes
+              const uploadTimeout = setTimeout(function() {
+                if (currentProc === realUploadProc && state === 'UPLOADING') {
+                  killProcessTree(realUploadProc.pid);
                   state = 'IDLE'; currentPhase = 'IDLE'; currentProc = null;
                   addLog('❌ Upload timeout (15 min)');
                   lastResult = '❌ Upload timeout (15 min)';
                   updatePanel();
+                  sendTelegramMsg('❌ <b>Upload Timeout</b> (15 min limit exceeded)');
                 }
               }, 900000);
 
-              uploadProc.on('close', (uCode) => {
+              realUploadProc.on('close', function(uCode) {
                 clearTimeout(uploadTimeout);
                 if (state === 'CANCELLING') return;
-                currentProc = null; currentPhase = 'IDLE';
-                try { fs.unlinkSync(UPLOAD_INLINE_PATH); } catch (_) {}
+                currentProc = null;
+                currentPhase = 'IDLE';
+
                 if (uCode === 0) {
                   saveCount++;
                   addLog('✅ Backup #' + saveCount + ' complete');
                   lastResult = '✅ Backup #' + saveCount + ' complete';
+                  sendTelegramMsg('✅ <b>Backup #' + saveCount + ' Complete</b>\nAll files uploaded successfully.');
                 } else {
                   addLog('❌ Upload failed (exit ' + uCode + ')');
                   lastResult = '❌ Upload failed (exit ' + uCode + ')';
+                  sendTelegramMsg('❌ <b>Upload Failed</b> (exit code: ' + uCode + ')');
                 }
-                state = 'IDLE'; updatePanel();
+                state = 'IDLE';
+                updatePanel();
               });
 
-              uploadProc.on('error', (err) => {
+              realUploadProc.on('error', function(err) {
                 clearTimeout(uploadTimeout);
                 if (state === 'CANCELLING') return;
                 currentProc = null; currentPhase = 'IDLE'; state = 'IDLE';
                 addLog('❌ Upload error: ' + err.message);
                 lastResult = '❌ Upload error: ' + err.message;
                 updatePanel();
+                sendTelegramMsg('❌ <b>Upload Error:</b> ' + err.message);
               });
             });
 
-            backupProc.on('error', (err) => {
+            backupProc.on('error', function(err) {
               clearTimeout(backupTimeout);
               if (state === 'CANCELLING') return;
               currentProc = null; currentPhase = 'IDLE'; state = 'IDLE';
               addLog('❌ Backup error: ' + err.message);
               lastResult = '❌ Backup error: ' + err.message;
               updatePanel();
+              sendTelegramMsg('❌ <b>Backup Error:</b> ' + err.message);
             });
           }
 
-          client.once('ready', async () => {
+          // ====== Timeout Alert Checker (Suggestion #5) ======
+          async function checkTimeoutAlerts() {
+            const elapsed   = Date.now() - WORKFLOW_START;
+            const remaining = WORKFLOW_TIMEOUT - elapsed;
+
+            for (let i = 0; i < ALERT_THRESHOLDS.length; i++) {
+              const threshold = ALERT_THRESHOLDS[i];
+              if (remaining <= threshold && !firedAlerts.has(threshold)) {
+                firedAlerts.add(threshold);
+                const mins = Math.round(threshold / 60000);
+                const alertText = '⏰ <b>TIMEOUT WARNING</b>\nSession ends in <b>' + mins + ' minute(s)</b>.\nSave your work immediately!';
+                await sendTelegramMsg(alertText);
+                if (controlMessage && controlMessage.channel) {
+                  try {
+                    await controlMessage.channel.send('⏰ **TIMEOUT WARNING** - Session ends in **' + mins + ' minute(s)**! Save your work!');
+                  } catch (_) {}
+                }
+                addLog('⏰ Timeout alert: ' + mins + 'm remaining');
+              }
+            }
+          }
+
+          // ====== Get Tailscale IP ======
+          function fetchTailscaleIp() {
+            try {
+              const statusJson = execSync('"C:\\Program Files\\Tailscale\\tailscale.exe" status --json', { encoding: 'utf8' });
+              const tsData = JSON.parse(statusJson);
+              if (tsData && tsData.Self && tsData.Self.TailscaleIPs && tsData.Self.TailscaleIPs.length > 0) {
+                tailscaleIp = tsData.Self.TailscaleIPs[0];
+              }
+            } catch (_) {}
+          }
+
+          // ====== Discord Events ======
+          client.once('ready', async function() {
             console.log('Bot online as:', client.user.tag);
+            fetchTailscaleIp();
+
             try {
               const channel = await client.channels.fetch(CHANNEL_ID);
-              if (!channel) { console.error('Channel not found:', CHANNEL_ID); process.exit(1); }
+              if (!channel) {
+                console.error('Channel not found:', CHANNEL_ID);
+                process.exit(1);
+              }
               controlMessage = await channel.send({ embeds: [buildEmbed()], components: buildButtons() });
-              console.log('Control panel sent');
-            } catch (err) { console.error('Failed to send control panel:', err.message); }
+              console.log('Discord control panel sent');
+            } catch (err) {
+              console.error('Failed to send control panel:', err.message);
+            }
+
+            // Initialize Telegram MTProto connection
+            await initTelegram();
+            if (tgEntity) {
+              const readyMsg = '🖥️ <b>RDP Ultra Station Online</b>\n' +
+                               '━━━━━━━━━━━━━━━━━━━━━\n' +
+                               '🔗 <b>Tailscale IP:</b> <code>' + tailscaleIp + '</code>\n' +
+                               '🕐 <b>Time:</b> ' + new Date().toLocaleString() + '\n' +
+                               '⏱️ <b>Session:</b> 360 minutes\n' +
+                               '━━━━━━━━━━━━━━━━━━━━━\n' +
+                               'Connect: <code>mstsc /v:' + tailscaleIp + '</code>';
+              await sendTelegramMsg(readyMsg);
+            }
+
+            // Start periodic checkers
+            setInterval(function() { checkTimeoutAlerts().catch(function() {}); }, 30000);
+            setInterval(function() { updatePanel().catch(function() {}); }, 15000);
+            setInterval(function() { fetchTailscaleIp(); }, 60000);
           });
 
-          client.on('interactionCreate', async (interaction) => {
+          client.on('interactionCreate', async function(interaction) {
             if (!interaction.isButton()) return;
             try { await interaction.deferUpdate(); } catch (_) {}
+
             switch (interaction.customId) {
-              case 'btn_save':   runBackup(); break;
-              case 'btn_cancel': await killAll(); break;
+              case 'btn_save':
+                runBackup();
+                break;
+              case 'btn_cancel':
+                await killAll();
+                break;
+              case 'btn_restart_ts':
+                await restartTailscale();
+                break;
               case 'btn_status':
                 try {
+                  const remaining = Math.max(0, 360 - Math.floor((Date.now() - WORKFLOW_START) / 60000));
                   await interaction.followUp({
-                    content: 'State: ' + state + ' | Phase: ' + currentPhase + ' | Saves: ' + saveCount + '\nLast: ' + lastResult,
+                    content: '**State:** ' + state + ' | **Phase:** ' + currentPhase + ' | **Saves:** ' + saveCount + ' | **Remaining:** ' + remaining + ' min\n**Last:** ' + lastResult,
                     ephemeral: true
                   });
                 } catch (_) {}
@@ -591,10 +1017,11 @@ jobs:
             }
           });
 
-          client.on('messageCreate', async (msg) => {
+          client.on('messageCreate', async function(msg) {
             if (msg.author.bot) return;
             if (msg.channelId !== CHANNEL_ID) return;
             const content = msg.content.trim().toLowerCase();
+
             if (content === '!' || content === '!c' || content === '!cancel') {
               await killAll();
               try { await msg.react('🛑'); } catch (_) {}
@@ -605,10 +1032,16 @@ jobs:
               try { await msg.react('💾'); } catch (_) {}
               return;
             }
+            if (content === '!restart' || content === '!rts') {
+              await restartTailscale();
+              try { await msg.react('🔄'); } catch (_) {}
+              return;
+            }
             if (content === '!status') {
               try {
+                const remaining = Math.max(0, 360 - Math.floor((Date.now() - WORKFLOW_START) / 60000));
                 await msg.reply({
-                  content: 'State: ' + state + ' | Phase: ' + currentPhase + ' | Saves: ' + saveCount + '\nLast: ' + lastResult,
+                  content: '**State:** ' + state + ' | **Phase:** ' + currentPhase + ' | **Saves:** ' + saveCount + ' | **Remaining:** ' + remaining + ' min\n**Last:** ' + lastResult,
                   ephemeral: true
                 });
               } catch (_) {}
@@ -616,21 +1049,38 @@ jobs:
             }
           });
 
-          process.on('unhandledRejection', (err) => { console.error('Unhandled rejection:', err.message || err); });
-          process.on('SIGTERM', () => { if (currentProc && currentProc.pid) killProcessTree(currentProc.pid); client.destroy(); process.exit(0); });
-          process.on('SIGINT',  () => { if (currentProc && currentProc.pid) killProcessTree(currentProc.pid); client.destroy(); process.exit(0); });
+          // ====== Graceful Shutdown ======
+          process.on('unhandledRejection', function(err) {
+            console.error('Unhandled rejection:', err.message || err);
+          });
 
-          setInterval(() => {
+          async function shutdown(reason) {
+            if (currentProc && currentProc.pid) killProcessTree(currentProc.pid);
+            await sendTelegramMsg('🛑 <b>Bot Terminated</b> (' + reason + ')');
+            client.destroy();
+            if (tgClient) {
+              try { await tgClient.disconnect(); } catch (_) {}
+            }
+            process.exit(0);
+          }
+
+          process.on('SIGTERM', function() { shutdown('SIGTERM'); });
+          process.on('SIGINT', function() { shutdown('SIGINT'); });
+
+          // Lock file watcher
+          setInterval(function() {
             if (!fs.existsSync(LOCK_FILE)) {
-              if (currentProc && currentProc.pid) killProcessTree(currentProc.pid);
-              client.destroy(); process.exit(0);
+              shutdown('Lock file removed');
             }
           }, 5000);
 
-          client.login(BOT_TOKEN).catch(err => { console.error('Login failed:', err.message); process.exit(1); });
+          client.login(BOT_TOKEN).catch(function(err) {
+            console.error('Login failed:', err.message);
+            process.exit(1);
+          });
           '@
           Set-Content -Path "$botDir\index.js" -Value $botScript -Encoding UTF8 -Force
-          Write-Host "Discord bot script created (direct upload embedded)"
+          Write-Host "Discord bot v3.0 created (MTProto unified)"
 
       - name: Fetch Launcher
         shell: pwsh
@@ -653,7 +1103,7 @@ jobs:
         run: |
           New-Item -Path "C:\session_active.lock" -ItemType File -Force | Out-Null
 
-      - name: All-in-One Session (Tailscale + Discord Bot + Wait)
+      - name: All-in-One Session (Tailscale + MTProto Notifier + Bot)
         shell: pwsh
         env:
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
@@ -662,6 +1112,7 @@ jobs:
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
+          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
         run: |
           $botDir = "C:\Users\Public\bot"
           $logDir = "C:\logs"
@@ -674,10 +1125,9 @@ jobs:
 
           if ($tsExe) {
               Write-Host "Starting Tailscale..."
-              & $tsExe up --authkey "${{ secrets.TAILSCALE_AUTHKEY }}" --hostname=RDP-STATION --accept-routes 2>&1 | Out-Null
+              & $tsExe up --authkey "$env:TAILSCALE_AUTHKEY" --hostname=RDP-STATION --accept-routes --reset 2>&1 | Out-Null
               Start-Sleep -Seconds 8
 
-              # محاولة الحصول على الـ IP من Tailscale
               $maxWait = 30
               $waited  = 0
               while ($waited -lt $maxWait) {
@@ -696,7 +1146,6 @@ jobs:
               }
 
               if ($tailscaleStatus -ne "Connected") {
-                  # fallback: حاول عبر ipconfig
                   $tsIpLine = ipconfig | Select-String "100\.\d+\.\d+\.\d+" | Select-Object -First 1
                   if ($tsIpLine) {
                       $tailscaleIp     = ($tsIpLine.Line -replace '.*?(\d+\.\d+\.\d+\.\d+).*','$1').Trim()
@@ -712,18 +1161,44 @@ jobs:
               $tailscaleStatus = "Not installed"
           }
 
-          # إرسال رسالة الاتصال إلى Discord و Telegram
-          $discordToken   = $env:DISCORD_BOT_TOKEN
-          $discordChannel = $env:DISCORD_CHANNEL_ID
-          $telegramToken  = $env:TELEGRAM_BOT_TOKEN
-          $telegramChannel = $env:TELEGRAM_CHANNEL_ID
-          
+          # ====== Send Connection Message via MTProto Notifier (THE FIX) ======
           $rdpUser = "${{ secrets.RDP_USERNAME }}"
           if ([string]::IsNullOrEmpty($rdpUser)) { $rdpUser = "TOOLBOXLAP" }
           $publicIp = try { (Invoke-RestMethod -Uri "https://api.ipify.org" -TimeoutSec 5) } catch { "N/A" }
           $now = Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC"
           $nl = "`n"
 
+          $tgMsg = "🖥️ <b>RDP SESSION READY</b>$nl" +
+                   "━━━━━━━━━━━━━━━━━━━━━$nl" +
+                   "🔗 <b>Tailscale IP:</b> <code>$tailscaleIp</code>$nl" +
+                   "🌐 <b>Public IP:</b> <code>$publicIp</code>$nl" +
+                   "👤 <b>RDP User:</b> <code>$rdpUser</code>$nl" +
+                   "🔌 <b>RDP Port:</b> <code>3389</code>$nl" +
+                   "📡 <b>Tailscale Status:</b> $tailscaleStatus$nl" +
+                   "🕐 <b>Time:</b> $now$nl" +
+                   "━━━━━━━━━━━━━━━━━━━━━$nl" +
+                   "Connect via: <code>mstsc /v:$tailscaleIp</code>"
+
+          Write-Host "Sending connection message via MTProto notifier..."
+          $notifierResult = Start-Process -FilePath "node" `
+              -ArgumentList "C:\Users\Public\notifier.js", "--message", "`"$tgMsg`"" `
+              -WorkingDirectory "C:\Users\Public" `
+              -NoNewWindow -PassThru -Wait `
+              -RedirectStandardOutput "$logDir\notifier.out.log" `
+              -RedirectStandardError "$logDir\notifier.err.log"
+
+          if ($notifierResult.ExitCode -eq 0) {
+              Write-Host "✅ Telegram connection message sent via MTProto"
+          } else {
+              Write-Host "⚠️ Notifier exit code: $($notifierResult.ExitCode)"
+              if (Test-Path "$logDir\notifier.err.log") {
+                  Get-Content "$logDir\notifier.err.log" -Tail 5
+              }
+          }
+
+          # ====== Send Discord message via REST (Discord doesn't have MTProto) ======
+          $discordToken   = $env:DISCORD_BOT_TOKEN
+          $discordChannel = $env:DISCORD_CHANNEL_ID
           if ($discordToken -and $discordChannel) {
               $msg = "🖥️ **RDP SESSION READY**$nl" +
                      "━━━━━━━━━━━━━━━━━━━━━$nl" +
@@ -742,46 +1217,24 @@ jobs:
                       -Method Post `
                       -Headers @{ Authorization = "Bot $discordToken"; "Content-Type" = "application/json; charset=utf-8" } `
                       -Body $bodyBytes | Out-Null
-                  Write-Host "Discord connection message sent"
+                  Write-Host "✅ Discord connection message sent"
               } catch {
-                  Write-Host "WARNING: Failed to send Discord message: $($_.Exception.Message)"
+                  Write-Host "⚠️ Discord message failed: $($_.Exception.Message)"
               }
           }
 
-          if ($telegramToken -and $telegramChannel) {
-              $tgMsg = "🖥️ <b>RDP SESSION READY</b>$nl" +
-                       "━━━━━━━━━━━━━━━━━━━━━$nl" +
-                       "🔗 <b>Tailscale IP:</b> <code>$tailscaleIp</code>$nl" +
-                       "🌐 <b>Public IP:</b> <code>$publicIp</code>$nl" +
-                       "👤 <b>RDP User:</b> <code>$rdpUser</code>$nl" +
-                       "🔌 <b>RDP Port:</b> <code>3389</code>$nl" +
-                       "📡 <b>Tailscale Status:</b> $tailscaleStatus$nl" +
-                       "🕐 <b>Time:</b> $now$nl" +
-                       "━━━━━━━━━━━━━━━━━━━━━$nl" +
-                       "Connect via: <code>mstsc /v:$tailscaleIp</code>"
-              $tgBody = @{
-                  chat_id = $telegramChannel
-                  text = $tgMsg
-                  parse_mode = "HTML"
-              } | ConvertTo-Json -Compress
-              $tgBodyBytes = [System.Text.Encoding]::UTF8.GetBytes($tgBody)
-              try {
-                  Invoke-RestMethod -Uri "https://api.telegram.org/bot$telegramToken/sendMessage" `
-                      -Method Post `
-                      -Headers @{ "Content-Type" = "application/json; charset=utf-8" } `
-                      -Body $tgBodyBytes | Out-Null
-                  Write-Host "Telegram connection message sent"
-              } catch {
-                  Write-Host "WARNING: Failed to send Telegram message: $($_.Exception.Message)"
-              }
-          }
-
+          # ====== Start Discord Bot ======
           Write-Host "Starting Discord bot..."
           $botProc = Start-Process -FilePath "node" -ArgumentList "$botDir\index.js" -WorkingDirectory $botDir -WindowStyle Hidden -PassThru -RedirectStandardOutput "$logDir\bot.out.log" -RedirectStandardError "$logDir\bot.err.log"
           Write-Host "Bot PID: $($botProc.Id)"
           Start-Sleep -Seconds 10
+
           if ($botProc.HasExited) {
               Write-Host "WARNING: Bot exited early with code $($botProc.ExitCode)"
+              if (Test-Path "$logDir\bot.err.log") {
+                  Write-Host "Bot error log:"
+                  Get-Content "$logDir\bot.err.log" -Tail 10
+              }
               while (Test-Path "C:\session_active.lock") { Start-Sleep -Seconds 30 }
           } else {
               Write-Host "Bot is running. Waiting for session to end..."
@@ -794,6 +1247,7 @@ jobs:
                   }
               }
           }
+
           Write-Host "Session ended - stopping bot..."
           if (-not $botProc.HasExited) {
               try { taskkill /PID $($botProc.Id) /T /F 2>$null } catch {}
@@ -801,7 +1255,7 @@ jobs:
           if (Test-Path "C:\session_active.lock") { Remove-Item "C:\session_active.lock" -Force }
           Write-Host "Bot stopped"
 
-      - name: Final Forced Backup (Direct Inline Upload)
+      - name: Final Forced Backup (MTProto Direct Upload)
         if: always()
         continue-on-error: true
         timeout-minutes: 28
@@ -815,155 +1269,63 @@ jobs:
           $tempDir      = $env:TEMP
           $manifestPath = Join-Path $tempDir "backup_output\backup_manifest.json"
           Write-Host "=== FINAL FORCED BACKUP ==="
+
           $workDir = Join-Path $tempDir "backup_work"
           if (Test-Path $workDir) { Remove-Item $workDir -Recurse -Force -ErrorAction SilentlyContinue }
+
           Write-Host "Running backup.ps1..."
           $bp = Start-Process -FilePath "pwsh" -ArgumentList "-ExecutionPolicy Bypass -File C:\Users\Public\backup.ps1" -NoNewWindow -PassThru -Wait
           Write-Host "Backup exit code: $($bp.ExitCode)"
+
           if (!(Test-Path $manifestPath)) {
               Write-Host "FINAL BACKUP: No manifest found - backup script may have failed"
               exit 0
           }
+
           $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
           if ($manifest.Count -eq 0) {
               Write-Host "FINAL BACKUP: $($manifest.Message)"
               exit 0
           }
-          Write-Host "Uploading $($manifest.Count) file(s) to Telegram..."
-          $uploadCode = @'
-          const { TelegramClient, Api } = require('telegram');
-          const { StringSession } = require('telegram/sessions');
-          const fs   = require('fs');
-          const path = require('path');
 
-          const apiId     = parseInt(process.env.TELEGRAM_API_ID);
-          const apiHash   = process.env.TELEGRAM_API_HASH;
-          const botToken  = process.env.TELEGRAM_BOT_TOKEN;
-          const channelId = process.env.TELEGRAM_CHANNEL_ID;
-          const manifestPath = path.join(process.env.TEMP || process.env.TMP, 'backup_output', 'backup_manifest.json');
+          Write-Host "Uploading $($manifest.Count) file(s) to Telegram via MTProto..."
 
-          if (!apiId || !apiHash || !botToken || !channelId) {
-            console.error('[TG] Missing required secrets: TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID');
-            process.exit(1);
+          # Upload each file using the unified notifier
+          $uploadedCount = 0
+          $failedCount   = 0
+
+          foreach ($file in $manifest.Files) {
+              if (Test-Path $file.Path) {
+                  Write-Host "Uploading: $($file.Name) ($($file.SizeMB) MB)"
+                  $caption = "Backup: $($file.Folder) | File: $($file.Name) | Size: $($file.SizeMB) MB | Source: RDP_FINAL_FORCED"
+
+                  $up = Start-Process -FilePath "node" `
+                      -ArgumentList "C:\Users\Public\notifier.js", "--file", "`"$($file.Path)`"", "--caption", "`"$caption`"" `
+                      -WorkingDirectory "C:\Users\Public" `
+                      -NoNewWindow -PassThru -Wait
+
+                  if ($up.ExitCode -eq 0) {
+                      Write-Host "✅ Uploaded: $($file.Name)"
+                      $uploadedCount++
+                      try { Remove-Item $file.Path -Force -ErrorAction SilentlyContinue } catch {}
+                  } else {
+                      Write-Host "❌ Failed: $($file.Name)"
+                      $failedCount++
+                  }
+              } else {
+                  Write-Host "⚠️ File not found: $($file.Path)"
+                  $failedCount++
+              }
           }
 
-          if (!fs.existsSync(manifestPath)) {
-            console.error('[TG] Manifest not found at:', manifestPath);
-            process.exit(1);
-          }
+          Write-Host "FINAL BACKUP RESULT: $uploadedCount uploaded, $failedCount failed"
 
-          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+          # Send completion notification
+          $finalMsg = "🏁 <b>Final Backup Complete</b>`nUploaded: $uploadedCount | Failed: $failedCount"
+          Start-Process -FilePath "node" `
+              -ArgumentList "C:\Users\Public\notifier.js", "--message", "`"$finalMsg`"" `
+              -WorkingDirectory "C:\Users\Public" `
+              -NoNewWindow -PassThru -Wait | Out-Null
 
-          if (!manifest.Success || !manifest.Files || manifest.Files.length === 0) {
-            console.log('[TG] Nothing to upload:', manifest.Message || 'No files');
-            process.exit(0);
-          }
-
-          console.log('[TG] Files to upload:', manifest.Count);
-          manifest.Files.forEach((f, i) => console.log('  ' + (i+1) + '. ' + f.Name + ' (' + f.SizeMB + ' MB) - ' + f.Folder));
-
-          let uploadDone = false;
-
-          (async () => {
-            const client = new TelegramClient(new StringSession(''), apiId, apiHash, {
-              connectionRetries: 5
-            });
-
-            await client.start({ botAuthToken: botToken });
-            console.log('[TG] Connected to Telegram as bot');
-
-            let entity = null;
-
-            if (channelId.startsWith('@')) {
-              console.log('[TG] Using channel username:', channelId);
-              entity = channelId;
-            } else {
-              const cleanId = parseInt(channelId.replace(/^-100/, ''));
-              console.log('[TG] Resolving numeric channel ID:', cleanId);
-              try {
-                const result = await client.invoke(
-                  new Api.channels.GetChannels({
-                    id: [new Api.InputChannel({ channelId: BigInt(cleanId), accessHash: BigInt(0) })]
-                  })
-                );
-                if (result.chats && result.chats.length > 0) {
-                  entity = result.chats[0];
-                  console.log('[TG] Channel resolved:', entity.title);
-                }
-              } catch (err) {
-                console.log('[TG] GetChannels failed:', err.errorMessage || err.message);
-                console.log('[TG] Trying InputPeerChannel fallback...');
-                entity = new Api.InputPeerChannel({ channelId: BigInt(cleanId), accessHash: BigInt(0) });
-              }
-            }
-
-            if (!entity) {
-              console.error('[TG] Could not resolve channel entity');
-              process.exit(1);
-            }
-
-            let success = 0, failed = 0;
-
-            for (const file of manifest.Files) {
-              if (!fs.existsSync(file.Path)) {
-                console.error('[TG] File not found:', file.Path);
-                failed++;
-                continue;
-              }
-              try {
-                const ts     = new Date().toISOString().replace(/[:.]/g, '-');
-                const sizeMB = (file.Size / 1048576).toFixed(2);
-                const caption = [
-                  'Backup: ' + file.Folder,
-                  'File: '   + file.Name,
-                  'Size: '   + sizeMB + ' MB',
-                  'Date: '   + ts,
-                  'Source: RDP_FINAL_FORCED'
-                ].join('\n');
-
-                console.log('[TG] Uploading:', file.Name, '(' + sizeMB + ' MB)...');
-
-                await client.sendFile(entity, {
-                  file: file.Path,
-                  caption: caption,
-                  forceDocument: true,
-                  fileName: file.Name,
-                  workers: 4
-                });
-
-                console.log('[TG] Uploaded:', file.Name);
-                success++;
-                try { fs.unlinkSync(file.Path); } catch (_) {}
-              } catch (err) {
-                console.error('[TG] Failed:', file.Name, '-', err.errorMessage || err.message);
-                failed++;
-              }
-            }
-
-            uploadDone = true;
-            console.log('[TG] RESULT: ' + success + ' ok, ' + failed + ' failed');
-
-            setTimeout(async () => {
-              try { await client.disconnect(); } catch (_) {}
-              process.exit(failed > 0 ? 1 : 0);
-            }, 3000);
-
-          })().catch(err => {
-            const msg = err.errorMessage || err.message || String(err);
-            if (uploadDone || msg === 'TIMEOUT') {
-              console.log('[TG] Upload succeeded, ignoring background timeout');
-              process.exit(0);
-            }
-            console.error('[TG] Telegram error:', msg);
-            process.exit(1);
-          });
-          '@
-          $tempJs = "C:\Users\Public\final_inline_upload.js"
-          Set-Content -Path $tempJs -Value $uploadCode -Encoding UTF8 -Force
-          $up = Start-Process -FilePath "node" -ArgumentList $tempJs -WorkingDirectory "C:\Users\Public" -NoNewWindow -PassThru -Wait
-          Write-Host "Upload exit code: $($up.ExitCode)"
-          Remove-Item $tempJs -Force -ErrorAction SilentlyContinue
-          if ($up.ExitCode -eq 0) { Write-Host "FINAL BACKUP: SUCCESS" }
-          else { Write-Host "FINAL BACKUP: UPLOAD FAILED" }
           if (Test-Path "C:\session_active.lock") { Remove-Item "C:\session_active.lock" -Force -ErrorAction SilentlyContinue }
           Write-Host "=== WORKFLOW COMPLETE ==="
