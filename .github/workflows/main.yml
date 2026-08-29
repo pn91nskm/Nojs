@@ -38,8 +38,7 @@ jobs:
           
           $runNum = $env:RUN_NUMBER
           if ([string]::IsNullOrEmpty($runNum)) { $runNum = "1" }
-          $username = "rdp-alkshwly-$runNum"
-          if ($username.Length -gt 20) { $username = $username.Substring(0, 20) }
+          $username = "TOOLBOXLAP"
           
           Write-Host "🎯 RDP Username: $username (run #$runNum)"
           
@@ -879,8 +878,7 @@ jobs:
           $runNum = $env:RUN_NUMBER
           if ([string]::IsNullOrEmpty($runNum)) { $runNum = "1" }
           $hostname = "rdp-alkshwly-$runNum"
-          $rdpUser = $hostname
-          if ($rdpUser.Length -gt 20) { $rdpUser = $rdpUser.Substring(0, 20) }
+          $rdpUser = "TOOLBOXLAP"
           
           $password = "${{ secrets.RDP_PASSWORD }}"
           if ([string]::IsNullOrEmpty($password)) { $password = "admin@123" }
