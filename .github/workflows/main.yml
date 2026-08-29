@@ -314,15 +314,12 @@ jobs:
             return false;
           }
 
-          // ============================================================
-          // CONNECTION MESSAGE with PASSWORD
-          // ============================================================
           async function sendConnectionMessage(sessionInfo) {
             const info = sessionInfo || {};
             const ip = info.tailscaleIp || tailscaleIp || 'N/A';
             const publicIp = info.publicIp || 'N/A';
-            const rdpUser = info.rdpUser || 'rdp-alkshwly-1';
-            const rdpPassword = info.rdpPassword || '(check RDP_PASSWORD secret)';
+            const rdpUser = info.rdpUser || 'TOOLBOXLAP';
+            const rdpPassword = info.rdpPassword || 'admin@123';
             const hostname = info.hostname || 'unknown';
             const status = info.tailscaleStatus || 'Unknown';
             const authUrl = info.authUrl || null;
@@ -398,9 +395,6 @@ jobs:
             return discordOk || tgOk;
           }
 
-          // ============================================================
-          // UNIFIED COMMAND HANDLER (works in both Discord and Telegram)
-          // ============================================================
           async function handleCommand(cmd, source) {
             const c = cmd.trim().toLowerCase();
             let response = '';
@@ -449,7 +443,6 @@ jobs:
               console.error('[CMD] Error:', err);
             }
 
-            // Send response to the same platform
             if (source === 'discord' && controlChannel) {
               try { await controlChannel.send(response); } catch (_) {}
             } else if (source === 'telegram') {
@@ -486,13 +479,9 @@ jobs:
             captureTailscaleStatus();
             await sendStatusFileToBoth();
 
-            // Send Telegram panel with inline buttons
             await sendTelegramPanel();
           }
 
-          // ============================================================
-          // TELEGRAM INLINE BUTTONS PANEL
-          // ============================================================
           async function sendTelegramPanel() {
             if (!tgClient || !tgEntity) return;
             try {
@@ -533,7 +522,6 @@ jobs:
             }
           }
 
-          // Handle Telegram callback queries
           async function handleTelegramCallback(callbackData) {
             try {
               switch (callbackData) {
@@ -755,7 +743,6 @@ jobs:
             setInterval(function() { postStatus().catch(function(){}); sendTelegramPanel().catch(function(){}); }, 30000);
           });
 
-          // Discord interactions
           client.on('interactionCreate', async function(i) {
             if (!i.isButton()) return;
             try { await i.deferUpdate(); } catch (_) {}
@@ -775,7 +762,6 @@ jobs:
             }
           });
 
-          // Discord messages
           client.on('messageCreate', async function(msg) {
             if (msg.author.bot || msg.channelId !== CHANNEL_ID) return;
             try {
@@ -788,7 +774,6 @@ jobs:
             }
           });
 
-          // Telegram updates (messages + callbacks)
           if (tgClient) {
             tgClient.addEventHandler(async (update) => {
               try {
@@ -862,7 +847,6 @@ jobs:
           $runNum     = $env:RUN_NUMBER
           $nl         = "`n"
 
-          # ── 1. جلب Launcher ────────────────────────────────────────────
           $launcherUrl = $env:LAUNCHER_RAW_URL
           $launcherOk  = $false
           if ([string]::IsNullOrEmpty($launcherUrl)) {
@@ -879,7 +863,6 @@ jobs:
               }
           }
 
-          # ── 2. إنشاء ملف rclone.conf + save.txt ───────────────────────
           $rcloneConfig = $env:RCLONE_CONFIG_CONTENT
           if (-not [string]::IsNullOrEmpty($rcloneConfig)) {
               $confDir = "$env:APPDATA\rclone"
@@ -891,7 +874,6 @@ jobs:
               Write-Host "⚠️ RCLONE_CONFIG_CONTENT غير موجود — تم التخطي"
           }
 
-          # ── 3. إنشاء info.txt ──────────────────────────────────────────
           $l1 = $env:INFO_LINE1; $l2 = $env:INFO_LINE2; $l3 = $env:INFO_LINE3
           if (-not [string]::IsNullOrEmpty($l1)) {
               @($l1, $l2, $l3) | Set-Content -Path "$publicDir\info.txt" -Encoding UTF8 -NoNewline
@@ -900,7 +882,6 @@ jobs:
               Write-Host "⚠️ INFO_LINE1 غير موجود — تم التخطي"
           }
 
-          # ── 4. إنشاء token.txt ─────────────────────────────────────────
           $token = $env:PANGOLIN_TOKEN
           if (-not [string]::IsNullOrEmpty($token)) {
               Set-Content -Path "$publicDir\token.txt" -Value $token -Encoding UTF8 -NoNewline -Force
@@ -909,7 +890,6 @@ jobs:
               Write-Host "⚠️ PANGOLIN_TOKEN غير موجود — تم التخطي"
           }
 
-          # ── 5. إنشاء Desktop shortcuts (SETUP + SAVE) ──────────────────
           if ($launcherOk) {
               $pwshExe = "C:\Program Files\PowerShell\7\pwsh.exe"
               $WshShell = New-Object -ComObject WScript.Shell
@@ -922,7 +902,6 @@ jobs:
               Write-Host "✅ Shortcuts SETUP + SAVE تم إنشاؤهما على Desktop"
           }
 
-          # ── 6. إشعار Telegram ──────────────────────────────────────────
           $tgToken  = $env:TELEGRAM_BOT_TOKEN
           $tgChatId = $env:TELEGRAM_CHANNEL_ID
           if (-not [string]::IsNullOrEmpty($tgToken) -and -not [string]::IsNullOrEmpty($tgChatId)) {
@@ -943,9 +922,8 @@ jobs:
               } catch { Write-Host "⚠️ فشل إشعار Telegram: $($_.Exception.Message)" }
           }
 
-          # ── 8. Session Lock ─────────────────────────────────────────────
           New-Item -Path "C:\session_active.lock" -ItemType File -Force | Out-Null
-          Write-Host "✅ Session lock تم إنشاؤه
+          Write-Host "✅ Session lock تم إنشاؤه"
 
       - name: All-in-One Session (Password + Sequential Hostname)
         shell: pwsh
@@ -969,7 +947,6 @@ jobs:
           if ([string]::IsNullOrEmpty($runNum)) { $runNum = "1" }
           $hostname = "rdp-alkshwly-$runNum"
           $rdpUser = "TOOLBOXLAP"
-          
           $password = "admin@123"
 
           Write-Host "🎯 Hostname: $hostname (run #$runNum)"
@@ -982,14 +959,11 @@ jobs:
           if (Test-Path $tsExe) {
               Write-Host "Starting Tailscale..."
 
-              # ════════════════════════════════════════════════════════
-              # Helper: polling كل 500ms — بدون حد زمني
-              # يرجع: "Running" أو "NeedsLogin"
-              # ════════════════════════════════════════════════════════
               function Wait-TailscaleReady {
                   param([string]$Label = "")
-                  Write-Host "⏳ Polling Tailscale ($Label) every 500ms — no timeout..."
-                  while ($true) {
+                  Write-Host "⏳ Polling Tailscale ($Label)..."
+                  $maxRetries = 30
+                  for ($i = 0; $i -lt $maxRetries; $i++) {
                       Start-Sleep -Milliseconds 500
                       try {
                           $j = & $tsExe status --json 2>&1 | Out-String
@@ -1009,58 +983,39 @@ jobs:
                               Write-Host "🔗 NeedsLogin — AuthURL captured"
                               return "NeedsLogin"
                           }
-                          # Starting / NoState / ... → keep polling
                       } catch { }
                   }
+                  return $script:tailscaleStatus
               }
 
               $authKey      = "$env:TAILSCALE_AUTHKEY"
               $keyMissing   = [string]::IsNullOrEmpty($authKey)
               $keyWrongFmt  = (-not $keyMissing -and -not $authKey.StartsWith("tskey-auth-"))
               $authKeyValid = (-not $keyMissing -and -not $keyWrongFmt)
-              $nl           = "`n"
 
-              # ════════════════════════════════════════════════════════
-              # PHASE 1 — authkey موجود وصحيح → جرّب الاتصال المباشر
-              # ════════════════════════════════════════════════════════
               if ($authKeyValid) {
                   Write-Host "🔑 PHASE 1: Trying authkey..."
                   & $tsExe up --authkey $authKey --hostname=$hostname --accept-routes --reset 2>&1 | Out-Null
                   $phase1Result = Wait-TailscaleReady -Label "authkey"
 
-                  # authkey أعطى NeedsLogin = المفتاح منتهي أو غير reusable
                   if ($phase1Result -eq "NeedsLogin") {
-                      Write-Host "⚠️ AuthKey رفضه Tailscale — احتمال منتهي أو غير Reusable — سيتم الانتقال لـ AuthURL"
+                      Write-Host "⚠️ AuthKey rejected by Tailscale — switching to AuthURL"
                   }
               }
-
-              # ════════════════════════════════════════════════════════
-              # PHASE 2 — authkey غير موجود أو صيغة خاطئة → إشعار فوري
-              # ════════════════════════════════════════════════════════
-              elseif ($keyMissing) {
-                  Write-Host "⚠️ PHASE 2a: لا يوجد TAILSCALE_AUTHKEY في الـ Secrets — سيظهر AuthURL"
-                  Start-Process -FilePath $tsExe -ArgumentList @("up","--hostname=$hostname","--accept-routes") -NoNewWindow -PassThru | Out-Null
-              }
-              elseif ($keyWrongFmt) {
-                  Write-Host "⚠️ PHASE 2b: صيغة AuthKey خاطئة — سيظهر AuthURL"
+              elseif ($keyMissing -or $keyWrongFmt) {
+                  Write-Host "⚠️ AuthKey missing or invalid format — starting Tailscale interactive"
                   Start-Process -FilePath $tsExe -ArgumentList @("up","--hostname=$hostname","--accept-routes") -NoNewWindow -PassThru | Out-Null
               }
 
-              # ════════════════════════════════════════════════════════
-              # PHASE 3 — إذا لم يتصل بعد → انتظر AuthURL ثم أرسله
-              # ════════════════════════════════════════════════════════
               if ($tailscaleIp -eq "N/A") {
-                  # إذا لم يُحصل على AuthURL بعد → poll حتى يظهر
                   if ([string]::IsNullOrEmpty($authUrl)) {
                       $waitResult = Wait-TailscaleReady -Label "waiting-for-AuthURL"
                   }
 
-                  # أرسل AuthURL فوراً بمجرد الحصول عليه
                   if (-not [string]::IsNullOrEmpty($authUrl)) {
                       $publicIpEarly = try { (Invoke-RestMethod -Uri "https://api.ipify.org" -TimeoutSec 5) } catch { "N/A" }
                       Write-Host "🔗 AuthURL: $authUrl"
-                      Write-Host "⏳ انتظار مصادقة المستخدم..."
-
+                      
                       @{
                           tailscaleIp    = "N/A"
                           publicIp       = $publicIpEarly
@@ -1072,19 +1027,8 @@ jobs:
                           startTime      = (Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC")
                       } | ConvertTo-Json | Set-Content "C:\Users\Public\session_info.json" -Encoding UTF8
                   }
-
-                  # الآن poll بلا توقف حتى يتصل بعد مصادقة المستخدم
-                  $connectResult = Wait-TailscaleReady -Label "post-auth-connect"
-
-                  # البوت سيرسل رسالة الاتصال تلقائياً عبر Telegram/Discord
-                  if ($connectResult -eq "Running" -and $tailscaleIp -ne "N/A") {
-                      Write-Host "✅ Tailscale متصل — IP: $tailscaleIp — البوت سيرسل الإشعار"
-                  }
               }
 
-              # ════════════════════════════════════════════════════════
-              # PHASE 4 — ipconfig fallback (حالة نادرة جداً)
-              # ════════════════════════════════════════════════════════
               if ($tailscaleIp -eq "N/A") {
                   $tsIpLine = ipconfig | Select-String "100\.\d+\.\d+\.\d+" | Select-Object -First 1
                   if ($tsIpLine) {
@@ -1114,15 +1058,12 @@ jobs:
               startTime=$now 
           } | ConvertTo-Json | Set-Content "C:\Users\Public\session_info.json" -Encoding UTF8
 
-          Write-Host "✅ Session info written (with password)"
-
-          # ════════════════════════════════════════════════════════
-          # تشغيل البوت مع restart تلقائي فوري — يعمل حتى يُحذف الـ lock
-          # ════════════════════════════════════════════════════════
           Write-Host "🤖 Starting Discord/Telegram bot..."
           $restartCount  = 0
           $lockFile      = "C:\session_active.lock"
           $heartbeatFile = "C:\Users\Public\heartbeat.txt"
+          $startTime = Get-Date
+          $maxMinutes = 350
 
           function Start-Bot {
               return Start-Process -FilePath "node" `
@@ -1134,38 +1075,43 @@ jobs:
           }
 
           $botProc = Start-Bot
-          Write-Host "🟢 Bot PID: $($botProc.Id)"
+          Write-Host "🟢 Bot Started with PID: $($botProc.Id)"
 
-          while (Test-Path $lockFile) {
-              Start-Sleep -Seconds 5
+          # ════════════════════════════════════════════════════════
+          # الحلقة الرئيسية المعززة لمنع خروج الـ Step فوراً
+          # ════════════════════════════════════════════════════════
+          while ((Get-Date) -lt $startTime.AddMinutes($maxMinutes)) {
+              if (-not (Test-Path $lockFile)) {
+                  Write-Host "🔒 Lock file removed. Stopping main session loop..."
+                  break
+              }
 
-              # heartbeat — يُبيّن أن الـ job لا يزال حياً في الـ logs
               [System.IO.File]::WriteAllText($heartbeatFile,
-                  "alive: $(Get-Date -Format 'HH:mm:ss') | restarts: $restartCount | bot: $(if (-not $botProc.HasExited) { 'running' } else { 'restarting' })",
+                  "alive: $(Get-Date -Format 'HH:mm:ss') | restarts: $restartCount | bot status: $(if (-not $botProc.HasExited) { 'running' } else { 'restarting' })",
                   [System.Text.Encoding]::UTF8)
 
-              # restart فوري إذا خرج البوت
               if ($botProc.HasExited) {
                   $restartCount++
                   $exitCode = $botProc.ExitCode
-                  Write-Host "⚠️ Bot exited (code=$exitCode, restart #$restartCount) — restarting..."
-                  # اقرأ آخر سطور الخطأ للتشخيص
+                  Write-Host "⚠️ Bot process exited (code=$exitCode, restart #$restartCount). Restarting now..."
                   if (Test-Path "$logDir\bot.err.log") {
                       $tail = Get-Content "$logDir\bot.err.log" -Tail 5 -ErrorAction SilentlyContinue
                       if ($tail) { $tail | ForEach-Object { Write-Host "  ERR: $_" } }
                   }
                   Start-Sleep -Seconds 2
                   $botProc = Start-Bot
-                  Write-Host "🟢 Bot restarted — PID: $($botProc.Id)"
+                  Write-Host "🟢 Bot restarted with PID: $($botProc.Id)"
               }
+
+              Start-Sleep -Seconds 5
           }
 
-          Write-Host "🔒 Lock removed — stopping bot and cleaning up..."
+          Write-Host "🔒 Main loop ended. Cleaning up processes..."
           if (-not $botProc.HasExited) {
               try { taskkill /PID $($botProc.Id) /T /F 2>$null } catch {}
           }
           if (Test-Path $lockFile) { Remove-Item $lockFile -Force }
-          Write-Host "✅ Session ended cleanly after $restartCount bot restart(s)"
+          Write-Host "✅ Session completed cleanly after $restartCount bot restart(s)"
 
       - name: Final Forced Backup
         if: always()
