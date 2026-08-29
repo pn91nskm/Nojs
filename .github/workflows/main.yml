@@ -19,6 +19,7 @@ jobs:
         run: |
           try {
               $nodeVer = (node --version 2>&1).Trim()
+              $npmVer = (npm --version 2>&1).Trim()
               if ($nodeVer -match '^v\d') {
                   Write-Host "Node.js already installed: $nodeVer"
                   exit 0
@@ -43,6 +44,7 @@ jobs:
           }
           Add-LocalGroupMember -Group "Administrators" -Member $username -ErrorAction SilentlyContinue
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username -ErrorAction SilentlyContinue
+
           $dirs = @("C:\Users\Public\Desktop","C:\Users\Public\Desktop\Project","C:\Users\Public\Desktop\Apps")
           foreach ($dir in $dirs) {
               if (!(Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
@@ -60,6 +62,7 @@ jobs:
           $xmlPath = "C:\defaultapps.xml"
           $chromePath = "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe"
           if (!(Test-Path $chromePath)) { $chromePath = "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe" }
+
           try {
               if (!(Test-Path $chromePath)) { throw "Chrome غير مثبت" }
               $xmlContent = '<?xml version="1.0" encoding="UTF-8"?><DefaultAssociations><Association Identifier=".htm" ProgId="ChromeHTML" ApplicationName="Google Chrome" /><Association Identifier=".html" ProgId="ChromeHTML" ApplicationName="Google Chrome" /><Association Identifier="http" ProgId="ChromeHTML" ApplicationName="Google Chrome" /><Association Identifier="https" ProgId="ChromeHTML" ApplicationName="Google Chrome" /></DefaultAssociations>'
@@ -69,7 +72,7 @@ jobs:
           if (Test-Path $xmlPath) { Remove-Item $xmlPath -Force }
 
       # ═══════════════════════════════════════════════════════════
-      #  محرك البحث: دفاع صارم متعدد الطبقات (معزز)
+      #  دفاع متعدد الطبقات: إجبار Google + تدمير Yahoo
       # ═══════════════════════════════════════════════════════════
       - name: Force Google & Destroy Yahoo (All Layers)
         shell: pwsh
@@ -77,9 +80,10 @@ jobs:
           Get-Process chrome -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 2
 
-          # ── الطبقة 1: سياسات Chrome الكاملة (managed) + كلمات المرور/Sync ──
           $pol = "HKLM:\Software\Policies\Google\Chrome"
           if (!(Test-Path $pol)) { New-Item -Path $pol -Force | Out-Null }
+
+          # ── الطبقة 1: سياسات Chrome الكاملة (managed) + كلمات المرور ──
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEnabled"    -Value 1        -Type DWord  -Force
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderName"       -Value "Google" -Type String -Force
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderKeyword"    -Value "google.com" -Type String -Force
@@ -88,15 +92,17 @@ jobs:
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderIconURL"    -Value "https://www.google.com/favicon.ico" -Type String -Force
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderNewTabURL"  -Value "https://www.google.com" -Type String -Force
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEncodings"  -Value "UTF-8"  -Type String -Force
+
           Set-ItemProperty -Path $pol -Name "PasswordManagerEnabled"    -Value 1 -Type DWord -Force
           Set-ItemProperty -Path $pol -Name "BrowserSignin"             -Value 1 -Type DWord -Force
           Set-ItemProperty -Path $pol -Name "AutofillAddressEnabled"    -Value 1 -Type DWord -Force
           Set-ItemProperty -Path $pol -Name "AutofillCreditCardEnabled" -Value 1 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "DeveloperToolsAvailability" -Value 1 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "PromotionalTabsEnabled" -Value 0 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "WelcomePageOnOSUpgradeEnabled" -Value 0 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "BackgroundModeEnabled" -Value 0 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "StartupBoostEnabled" -Value 0 -Type DWord -Force
+
+          Set-ItemProperty -Path $pol -Name "DeveloperToolsAvailability"  -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "PromotionalTabsEnabled"       -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "WelcomePageOnOSUpgradeEnabled"-Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "BackgroundModeEnabled"        -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "StartupBoostEnabled"          -Value 0 -Type DWord -Force
           Write-Host "✅ الطبقة 1: سياسات Chrome + Sync/كلمات المرور"
 
           # ── الطبقة 2: حظر جميع الإضافات + التثبيت الخارجي ──
@@ -109,8 +115,8 @@ jobs:
           Set-ItemProperty -Path $typeBlock -Name "2" -Value "sideload"    -Type String -Force
           Write-Host "✅ الطبقة 2: حظر جميع الإضافات + التثبيت الخارجي"
 
-          # ── الطبقة 3: حذف Yahoo (extensions + برامج + registry) ──
-          $yahooIds = @("cnmdgidklhhnmpphlfmmopmghfjhgkdi","nljkibfhlpcnanjgbnlnbjecgicbjkge","fpmeembnagmagppkgghhfjfdfcah")
+          # ── الطبقة 3: حذف Yahoo من كل مكان ──
+          $yahooIds = @("cnmdgidklhhnmpphlfmmopmghfjhgkdi","nljkibfhlpcnanjgbnlnbjecgicbjkge","fpmeembnagmagppkgghhfjfdfajdfcah")
           Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
               $extDir = Join-Path $_.FullName "AppData\Local\Google\Chrome\User Data\Default\Extensions"
               if (Test-Path $extDir) {
@@ -159,7 +165,7 @@ jobs:
               Write-Host "✅ الطبقة 5: حماية Registry بـ ACLs"
           } catch { Write-Host "⚠️ تعذر ضبط ACLs: $_" }
 
-          # ── الطبقة 6: Watchdog (Scheduled Task كل 30 ثانية كـ SYSTEM) — معزز ──
+          # ── الطبقة 6: Watchdog — Scheduled Task كل 30 ثانية كـ SYSTEM ──
           $watchdogContent = @'
           $pol = "HKLM:\Software\Policies\Google\Chrome"
           $cur = Get-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL" -ErrorAction SilentlyContinue
@@ -173,13 +179,6 @@ jobs:
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderNewTabURL"  -Value "https://www.google.com" -Type String -Force
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEncodings"  -Value "UTF-8"  -Type String -Force
           }
-          $pm = Get-ItemProperty -Path $pol -Name "PasswordManagerEnabled" -ErrorAction SilentlyContinue
-          if ($pm.PasswordManagerEnabled -ne 1) {
-          Set-ItemProperty -Path $pol -Name "PasswordManagerEnabled"    -Value 1 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "BrowserSignin"             -Value 1 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "AutofillAddressEnabled"    -Value 1 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "AutofillCreditCardEnabled" -Value 1 -Type DWord -Force
-          }
           '@
           Set-Content -Path "C:\Users\Public\search_watchdog.ps1" -Value $watchdogContent -Encoding UTF8
           try {
@@ -190,6 +189,7 @@ jobs:
               Register-ScheduledTask -TaskName "GoogleSearchWatchdog" -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -User "SYSTEM" -Force | Out-Null
               Write-Host "✅ الطبقة 6: Watchdog مُسجّل (كل 30 ثانية كـ SYSTEM)"
           } catch { Write-Host "⚠️ تعذر تسجيل Watchdog: $_" }
+
           Write-Host "🛡️ اكتمل الدفاع متعدد الطبقات — Google مُجبر + كلمات المرور مفعّلة"
 
       - name: Install Tailscale
@@ -265,6 +265,13 @@ jobs:
           if (!(Test-Path $botDir)) { New-Item -ItemType Directory -Path $botDir -Force | Out-Null }
           '{"name":"rdp-bot","version":"5.8.0","private":true,"main":"index.js","dependencies":{"discord.js":"^14.16.3","telegram":"^2.26.22"}}' | Set-Content "$botDir\package.json" -Encoding UTF8
           $botScript = @'
+          /**
+          * RDP Bot v5.8
+          * - Password included in connection message
+          * - Unified commands: work in BOTH Discord and Telegram
+          * - Telegram inline buttons for interactive control
+          * - Comprehensive error handling (no crashes)
+          */
           const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
           const { TelegramClient, Api } = require('telegram');
           const { StringSession } = require('telegram/sessions');
@@ -311,20 +318,36 @@ jobs:
           try {
           const body = JSON.stringify({ content: content });
           const url = new URL(WEBHOOK_URL);
-          const options = { hostname: url.hostname, path: url.pathname + url.search, method: 'POST', headers: { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(body, 'utf8') } };
+          const options = {
+          hostname: url.hostname,
+          path: url.pathname + url.search,
+          method: 'POST',
+          headers: {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Content-Length': Buffer.byteLength(body, 'utf8')
+          }
+          };
           const proto = url.protocol === 'https:' ? https : http;
           const req = proto.request(options, (res) => {
           let data = '';
           res.on('data', c => data += c);
           res.on('end', () => {
-          if (res.statusCode >= 200 && res.statusCode < 300) { console.log('[WH] Discord webhook sent'); resolve(true); }
-          else { console.error('[WH] Discord webhook failed: ' + res.statusCode); resolve(false); }
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+          console.log('[WH] Discord webhook sent');
+          resolve(true);
+          } else {
+          console.error('[WH] Discord webhook failed: ' + res.statusCode);
+          resolve(false);
+          }
           });
           });
           req.on('error', e => { console.error('[WH] Error:', e.message); resolve(false); });
           req.write(body);
           req.end();
-          } catch (e) { console.error('[WH] Exception:', e.message); resolve(false); }
+          } catch (e) {
+          console.error('[WH] Exception:', e.message);
+          resolve(false);
+          }
           });
           }
           function getTailscaleStatus() {
@@ -334,23 +357,35 @@ jobs:
           const st = JSON.parse(fullJson);
           backendState = st.BackendState || 'Unknown';
           authUrl = st.AuthURL || null;
-          if (st.Self && st.Self.TailscaleIPs && st.Self.TailscaleIPs.length > 0) { ip = st.Self.TailscaleIPs[0]; }
+          if (st.Self && st.Self.TailscaleIPs && st.Self.TailscaleIPs.length > 0) {
+          ip = st.Self.TailscaleIPs[0];
+          }
           } catch (_) {}
-          try { textStatus = execSync('"' + TS_EXE + '" status', { encoding: 'utf8' }); } catch (_) { textStatus = ''; }
+          try {
+          textStatus = execSync('"' + TS_EXE + '" status', { encoding: 'utf8' });
+          } catch (_) { textStatus = ''; }
           return { fullJson, textStatus, ip, backendState, authUrl };
           }
           function captureTailscaleStatus() {
           const { fullJson } = getTailscaleStatus();
-          if (fullJson) { try { fs.writeFileSync(TS_STATUS_FILE, fullJson.trim(), 'utf8'); return true; } catch (_) {} }
+          if (fullJson) {
+          try { fs.writeFileSync(TS_STATUS_FILE, fullJson.trim(), 'utf8'); return true; } catch (_) {}
+          }
           return false;
           }
           async function sendStatusFileToBoth() {
           if (!fs.existsSync(TS_STATUS_FILE)) return;
           if (tgClient && tgEntity) {
-          try { await tgClient.sendFile(tgEntity, { file: TS_STATUS_FILE, forceDocument: true, fileName: 'tailscale_status.json' }); addLog('📎 JSON -> TG'); } catch (_) { addLog('❌ JSON -> TG failed'); }
+          try {
+          await tgClient.sendFile(tgEntity, { file: TS_STATUS_FILE, forceDocument: true, fileName: 'tailscale_status.json' });
+          addLog('📎 JSON -> TG');
+          } catch (_) { addLog('❌ JSON -> TG failed'); }
           }
           if (controlChannel) {
-          try { await controlChannel.send({ files: [{ attachment: TS_STATUS_FILE, name: 'tailscale_status.json' }] }); addLog('📎 JSON -> Discord'); } catch (_) { addLog('❌ JSON -> Discord failed'); }
+          try {
+          await controlChannel.send({ files: [{ attachment: TS_STATUS_FILE, name: 'tailscale_status.json' }] });
+          addLog('📎 JSON -> Discord');
+          } catch (_) { addLog('❌ JSON -> Discord failed'); }
           }
           updatePanel();
           }
@@ -374,7 +409,9 @@ jobs:
           async function resolveChannelEntity(inst) {
           if (!TELEGRAM_CHANNEL) return null;
           try { return await inst.getEntity(TELEGRAM_CHANNEL); } catch (_) {}
-          if (/^\d+$/.test(TELEGRAM_CHANNEL)) { try { return await inst.getEntity('-100' + TELEGRAM_CHANNEL); } catch (_) {} }
+          if (/^\d+$/.test(TELEGRAM_CHANNEL)) {
+          try { return await inst.getEntity('-100' + TELEGRAM_CHANNEL); } catch (_) {}
+          }
           return null;
           }
           async function sendTelegramMsg(htmlText, maxRetries) {
@@ -386,12 +423,18 @@ jobs:
           return true;
           } catch (err) {
           const m = err.errorMessage || err.message || '';
-          if (m.includes('FLOOD_WAIT')) { await sleep(parseInt((m.match(/\d+/) || ['30'])[0]) * 1000); continue; }
+          if (m.includes('FLOOD_WAIT')) {
+          await sleep(parseInt((m.match(/\d+/) || ['30'])[0]) * 1000);
+          continue;
+          }
           if (i < 2) await sleep([2000, 4000][i] || 2000);
           }
           }
           return false;
           }
+          // ============================================================
+          // CONNECTION MESSAGE with PASSWORD
+          // ============================================================
           async function sendConnectionMessage(sessionInfo) {
           const info = sessionInfo || {};
           const ip = info.tailscaleIp || tailscaleIp || 'N/A';
@@ -405,12 +448,45 @@ jobs:
           let msg;
           if (status === 'NeedsLogin' || ip === 'N/A') {
           if (authUrl) {
-          msg = '⚠️ **Tailscale Requires Authentication**\n' + '━━━━━━━━━━━━━━━━━━━━━\n' + '🔗 **Auth URL:** ' + authUrl + '\n' + '🖥️ **Hostname:** ' + hostname + '\n' + '🌐 **Public IP:** ' + publicIp + '\n' + '👤 **RDP User:** ' + rdpUser + '\n' + '🔑 **Password:** ' + rdpPassword + '\n' + '📡 **Status:** ' + status + '\n' + '🕐 **Time:** ' + time + '\n' + '━━━━━━━━━━━━━━━━━━━━━\n' + '👉 **Open the Auth URL above to authenticate**';
+          msg = '⚠️ **Tailscale Requires Authentication**\n' +
+          '━━━━━━━━━━━━━━━━━━━━━\n' +
+          '🔗 **Auth URL:** ' + authUrl + '\n' +
+          '🖥️ **Hostname:** ' + hostname + '\n' +
+          '🌐 **Public IP:** ' + publicIp + '\n' +
+          '👤 **RDP User:** ' + rdpUser + '\n' +
+          '🔑 **Password:** ' + rdpPassword + '\n' +
+          '📡 **Status:** ' + status + '\n' +
+          '🕐 **Time:** ' + time + '\n' +
+          '━━━━━━━━━━━━━━━━━━━━━\n' +
+          '👉 **Open the Auth URL above to authenticate**';
           } else {
-          msg = '❌ **Tailscale Auth Failed**\n' + '━━━━━━━━━━━━━━━━━━━━━\n' + '🖥️ **Hostname:** ' + hostname + '\n' + '🌐 **Public IP:** ' + publicIp + '\n' + '👤 **RDP User:** ' + rdpUser + '\n' + '🔑 **Password:** ' + rdpPassword + '\n' + '📡 **Status:** ' + status + '\n' + '🕐 **Time:** ' + time + '\n' + '━━━━━━━━━━━━━━━━━━━━━\n' + '⚠️ **Fix:** Check TAILSCALE_AUTHKEY secret\n' + '• Must start with `tskey-auth-`\n' + '• Must have **Reusable** enabled\n' + 'Generate: https://login.tailscale.com/admin/settings/keys';
+          msg = '❌ **Tailscale Auth Failed**\n' +
+          '━━━━━━━━━━━━━━━━━━━━━\n' +
+          '🖥️ **Hostname:** ' + hostname + '\n' +
+          '🌐 **Public IP:** ' + publicIp + '\n' +
+          '👤 **RDP User:** ' + rdpUser + '\n' +
+          '🔑 **Password:** ' + rdpPassword + '\n' +
+          '📡 **Status:** ' + status + '\n' +
+          '🕐 **Time:** ' + time + '\n' +
+          '━━━━━━━━━━━━━━━━━━━━━\n' +
+          '⚠️ **Fix:** Check TAILSCALE_AUTHKEY secret\n' +
+          '• Must start with `tskey-auth-`\n' +
+          '• Must have **Reusable** enabled\n' +
+          'Generate: https://login.tailscale.com/admin/settings/keys';
           }
           } else {
-          msg = '🖥️ RDP SESSION READY\n' + '━━━━━━━━━━━━━━━━━━━━━\n' + '🔗 Tailscale IP: ' + ip + '\n' + '🖥️ Hostname: ' + hostname + '\n' + '🌐 Public IP: ' + publicIp + '\n' + '👤 RDP User: ' + rdpUser + '\n' + '🔑 Password: ' + rdpPassword + '\n' + '🔌 RDP Port: 3389\n' + '📡 Status: ' + status + '\n' + '🕐 Time: ' + time + '\n' + '━━━━━━━━━━━━━━━━━━━━━\n' + 'Connect via: mstsc /v:' + ip;
+          msg = '🖥️ RDP SESSION READY\n' +
+          '━━━━━━━━━━━━━━━━━━━━━\n' +
+          '🔗 Tailscale IP: ' + ip + '\n' +
+          '🖥️ Hostname: ' + hostname + '\n' +
+          '🌐 Public IP: ' + publicIp + '\n' +
+          '👤 RDP User: ' + rdpUser + '\n' +
+          '🔑 Password: ' + rdpPassword + '\n' +
+          '🔌 RDP Port: 3389\n' +
+          '📡 Status: ' + status + '\n' +
+          '🕐 Time: ' + time + '\n' +
+          '━━━━━━━━━━━━━━━━━━━━━\n' +
+          'Connect via: mstsc /v:' + ip;
           }
           let discordOk = false;
           if (WEBHOOK_URL) {
@@ -418,40 +494,83 @@ jobs:
           if (discordOk) addLog('📨 Conn msg -> Discord webhook');
           }
           if (!discordOk && controlChannel) {
-          try { await controlChannel.send({ content: msg }); addLog('📨 Conn msg -> Discord bot'); discordOk = true; } catch (_) { addLog('❌ Discord bot msg failed'); }
+          try {
+          await controlChannel.send({ content: msg });
+          addLog('📨 Conn msg -> Discord bot');
+          discordOk = true;
+          } catch (_) { addLog('❌ Discord bot msg failed'); }
           }
-          const tgHtml = msg.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>');
+          const tgHtml = msg
+          .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+          .replace(/`([^`]+)`/g, '<code>$1</code>');
           let tgOk = false;
-          if (tgClient && tgEntity) { tgOk = await sendTelegramMsg(tgHtml, 3); if (tgOk) addLog('📨 Conn msg -> TG'); }
+          if (tgClient && tgEntity) {
+          tgOk = await sendTelegramMsg(tgHtml, 3);
+          if (tgOk) addLog('📨 Conn msg -> TG');
+          }
           return discordOk || tgOk;
           }
+          // ============================================================
+          // UNIFIED COMMAND HANDLER (works in both Discord and Telegram)
+          // ============================================================
           async function handleCommand(cmd, source) {
           const c = cmd.trim().toLowerCase();
           let response = '';
           try {
-          if (c === '!' || c === '!c' || c === '!cancel') { await killAll(); response = '🛑 Operation cancelled'; }
-          else if (c === '!save' || c === '!start') { runBackup(); response = '💾 Backup started'; }
-          else if (c === '!restart' || c === '!rts') { await restartTailscale(); response = '🔄 Tailscale restart initiated'; }
-          else if (c === '!json') { captureTailscaleStatus(); await sendStatusFileToBoth(); response = '📎 JSON file sent'; }
-          else if (c === '!conn') { await sendConnectionMessage(); response = '📨 Connection message re-sent'; }
+          if (c === '!' || c === '!c' || c === '!cancel') {
+          await killAll();
+          response = '🛑 Operation cancelled';
+          }
+          else if (c === '!save' || c === '!start') {
+          runBackup();
+          response = '💾 Backup started';
+          }
+          else if (c === '!restart' || c === '!rts') {
+          await restartTailscale();
+          response = '🔄 Tailscale restart initiated';
+          }
+          else if (c === '!json') {
+          captureTailscaleStatus();
+          await sendStatusFileToBoth();
+          response = '📎 JSON file sent';
+          }
+          else if (c === '!conn') {
+          await sendConnectionMessage();
+          response = '📨 Connection message re-sent';
+          }
           else if (c === '!status') {
           const remaining = Math.max(0, 360 - Math.floor((Date.now() - WORKFLOW_START) / 60000));
           response = '**State:** ' + state + '\n**Phase:** ' + currentPhase + '\n**Saves:** ' + saveCount + '\n**Remaining:** ' + remaining + ' min\n**Last:** ' + maskSecrets(lastResult);
           }
           else if (c === '!help') {
-          response = '**Available Commands:**\n' + '`!save` - Start backup\n' + '`!cancel` - Cancel operation\n' + '`!restart` - Restart Tailscale\n' + '`!json` - Send Tailscale JSON\n' + '`!conn` - Re-send connection message\n' + '`!status` - Show current status\n' + '`!help` - Show this help';
+          response = '**Available Commands:**\n' +
+          '`!save` - Start backup\n' +
+          '`!cancel` - Cancel operation\n' +
+          '`!restart` - Restart Tailscale\n' +
+          '`!json` - Send Tailscale JSON\n' +
+          '`!conn` - Re-send connection message\n' +
+          '`!status` - Show current status\n' +
+          '`!help` - Show this help';
           }
-          else { response = '❓ Unknown command. Type `!help` for available commands.'; }
+          else {
+          response = '❓ Unknown command. Type `!help` for available commands.';
+          }
           } catch (err) {
           response = '❌ Command error: ' + maskSecrets(err.message).substring(0, 100);
           console.error('[CMD] Error:', err);
           }
-          if (source === 'discord' && controlChannel) { try { await controlChannel.send(response); } catch (_) {} }
-          else if (source === 'telegram') { await sendTelegramMsg(response.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>'), 2); }
+          if (source === 'discord' && controlChannel) {
+          try { await controlChannel.send(response); } catch (_) {}
+          } else if (source === 'telegram') {
+          await sendTelegramMsg(response.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>'), 2);
+          }
           return response;
           }
           async function initializeTelegramAndNotify() {
-          if (!TELEGRAM_API_ID || !TELEGRAM_API_HASH || !TELEGRAM_BOT_TOKEN || !TELEGRAM_CHANNEL) { addLog('⚠️ TG credentials missing'); return; }
+          if (!TELEGRAM_API_ID || !TELEGRAM_API_HASH || !TELEGRAM_BOT_TOKEN || !TELEGRAM_CHANNEL) {
+          addLog('⚠️ TG credentials missing');
+          return;
+          }
           addLog('📡 Connecting TG...'); updatePanel();
           tgClient = await initTelegramConnection();
           if (!tgClient) { addLog('❌ TG connection failed'); lastResult = '❌ TG connection failed'; updatePanel(); return; }
@@ -460,7 +579,10 @@ jobs:
           let sessionInfo = null;
           try {
           const infoPath = 'C:\\Users\\Public\\session_info.json';
-          if (fs.existsSync(infoPath)) { sessionInfo = JSON.parse(fs.readFileSync(infoPath, 'utf8')); if (sessionInfo.tailscaleIp) tailscaleIp = sessionInfo.tailscaleIp; }
+          if (fs.existsSync(infoPath)) {
+          sessionInfo = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
+          if (sessionInfo.tailscaleIp) tailscaleIp = sessionInfo.tailscaleIp;
+          }
           } catch (_) {}
           const sent = await sendConnectionMessage(sessionInfo);
           lastResult = sent ? '✅ Connection msg sent' : '❌ Connection msg failed';
@@ -469,37 +591,81 @@ jobs:
           await sendStatusFileToBoth();
           await sendTelegramPanel();
           }
+          // ============================================================
+          // TELEGRAM INLINE BUTTONS PANEL
+          // ============================================================
           async function sendTelegramPanel() {
           if (!tgClient || !tgEntity) return;
           try {
           const remaining = Math.max(0, 360 - Math.floor((Date.now() - WORKFLOW_START) / 60000));
-          const text = '🖥️ <b>RDP Ultra Station Control</b>\n' + '📊 <b>Status:</b> ' + state + '\n' + '⏱️ <b>Remaining:</b> ' + remaining + ' min\n' + '💾 <b>Saves:</b> ' + saveCount + '\n' + '🔗 <b>TS IP:</b> <code>' + tailscaleIp + '</code>\n' + 'Use buttons below or type commands:';
+          const text = '🖥️ <b>RDP Ultra Station Control</b>\n' +
+          '📊 <b>Status:</b> ' + state + '\n' +
+          '⏱️ <b>Remaining:</b> ' + remaining + ' min\n' +
+          '💾 <b>Saves:</b> ' + saveCount + '\n' +
+          '🔗 <b>TS IP:</b> <code>' + tailscaleIp + '</code>\n' +
+          'Use buttons below or type commands:';
           const buttons = [
-          [ { text: '💾 Save', callback_data: 'btn_save' }, { text: '🛑 Cancel', callback_data: 'btn_cancel' } ],
-          [ { text: '🔄 Restart TS', callback_data: 'btn_restart_ts' }, { text: '📊 Status', callback_data: 'btn_status' } ],
-          [ { text: '📎 JSON', callback_data: 'btn_json' }, { text: '📨 Re-send', callback_data: 'btn_conn' } ]
+          [
+          { text: '💾 Save', callback_data: 'btn_save' },
+          { text: '🛑 Cancel', callback_data: 'btn_cancel' }
+          ],
+          [
+          { text: '🔄 Restart TS', callback_data: 'btn_restart_ts' },
+          { text: '📊 Status', callback_data: 'btn_status' }
+          ],
+          [
+          { text: '📎 JSON', callback_data: 'btn_json' },
+          { text: '📨 Re-send', callback_data: 'btn_conn' }
+          ]
           ];
           if (tgPanelMsg) {
-          try { await tgClient.editMessage(tgEntity, tgPanelMsg.id, undefined, text, { buttons: buttons, parseMode: 'html' }); }
-          catch (_) { tgPanelMsg = await tgClient.sendMessage(tgEntity, text, { buttons: buttons, parseMode: 'html' }); }
+          try {
+          await tgClient.editMessage(tgEntity, tgPanelMsg.id, undefined, text, { buttons: buttons, parseMode: 'html' });
+          } catch (_) {
+          tgPanelMsg = await tgClient.sendMessage(tgEntity, text, { buttons: buttons, parseMode: 'html' });
+          }
           } else {
           tgPanelMsg = await tgClient.sendMessage(tgEntity, text, { buttons: buttons, parseMode: 'html' });
           }
-          } catch (err) { console.error('[TG PANEL] Error:', err.message); }
+          } catch (err) {
+          console.error('[TG PANEL] Error:', err.message);
+          }
           }
           async function handleTelegramCallback(callbackData) {
           try {
           switch (callbackData) {
-          case 'btn_save': runBackup(); await sendTelegramMsg('💾 Backup started', 2); break;
-          case 'btn_cancel': await killAll(); await sendTelegramMsg('🛑 Cancelled', 2); break;
-          case 'btn_restart_ts': await restartTailscale(); await sendTelegramMsg('🔄 Restart initiated', 2); break;
+          case 'btn_save':
+          runBackup();
+          await sendTelegramMsg('💾 Backup started', 2);
+          break;
+          case 'btn_cancel':
+          await killAll();
+          await sendTelegramMsg('🛑 Cancelled', 2);
+          break;
+          case 'btn_restart_ts':
+          await restartTailscale();
+          await sendTelegramMsg('🔄 Restart initiated', 2);
+          break;
           case 'btn_status': {
           const remaining = Math.max(0, 360 - Math.floor((Date.now() - WORKFLOW_START) / 60000));
-          await sendTelegramMsg('<b>Status:</b> ' + state + '\n' + '<b>Remaining:</b> ' + remaining + ' min\n' + '<b>Saves:</b> ' + saveCount + '\n' + '<b>Last:</b> ' + maskSecrets(lastResult), 2);
+          await sendTelegramMsg(
+          '<b>Status:</b> ' + state + '\n' +
+          '<b>Remaining:</b> ' + remaining + ' min\n' +
+          '<b>Saves:</b> ' + saveCount + '\n' +
+          '<b>Last:</b> ' + maskSecrets(lastResult),
+          2
+          );
           break;
           }
-          case 'btn_json': captureTailscaleStatus(); await sendStatusFileToBoth(); await sendTelegramMsg('📎 JSON sent', 2); break;
-          case 'btn_conn': await sendConnectionMessage(); await sendTelegramMsg('📨 Connection message re-sent', 2); break;
+          case 'btn_json':
+          captureTailscaleStatus();
+          await sendStatusFileToBoth();
+          await sendTelegramMsg('📎 JSON sent', 2);
+          break;
+          case 'btn_conn':
+          await sendConnectionMessage();
+          await sendTelegramMsg('📨 Connection message re-sent', 2);
+          break;
           }
           await sendTelegramPanel();
           } catch (err) {
@@ -595,8 +761,12 @@ jobs:
           await sendConnectionMessage({ tailscaleIp: newIp, tailscaleStatus: 'Restarted', hostname: 'rdp-alkshwly-' + runNum });
           captureTailscaleStatus();
           await sendStatusFileToBoth();
-          } else { lastResult = '⚠️ IP pending'; }
-          } catch (err) { lastResult = '❌ ' + maskSecrets(err.message).substring(0, 80); }
+          } else {
+          lastResult = '⚠️ IP pending';
+          }
+          } catch (err) {
+          lastResult = '❌ ' + maskSecrets(err.message).substring(0, 80);
+          }
           state = 'IDLE'; currentPhase = 'IDLE'; updatePanel();
           }
           async function killAll() {
@@ -669,6 +839,7 @@ jobs:
           setInterval(function() { checkTimeoutAlerts().catch(function(){}); }, 30000);
           setInterval(function() { postStatus().catch(function(){}); sendTelegramPanel().catch(function(){}); }, 30000);
           });
+          // Discord interactions
           client.on('interactionCreate', async function(i) {
           if (!i.isButton()) return;
           try { await i.deferUpdate(); } catch (_) {}
@@ -683,37 +854,55 @@ jobs:
           break;
           }
           }
-          } catch (err) { console.error('[DISCORD BTN] Error:', err.message); }
+          } catch (err) {
+          console.error('[DISCORD BTN] Error:', err.message);
+          }
           });
+          // Discord messages
           client.on('messageCreate', async function(msg) {
           if (msg.author.bot || msg.channelId !== CHANNEL_ID) return;
           try {
           await handleCommand(msg.content, 'discord');
-          if (msg.content.trim().toLowerCase().startsWith('!')) { msg.react('✅').catch(function(){}); }
-          } catch (err) { console.error('[DISCORD MSG] Error:', err.message); }
+          if (msg.content.trim().toLowerCase().startsWith('!')) {
+          msg.react('✅').catch(function(){});
+          }
+          } catch (err) {
+          console.error('[DISCORD MSG] Error:', err.message);
+          }
           });
+          // Telegram updates (messages + callbacks)
           if (tgClient) {
           tgClient.addEventHandler(async (update) => {
           try {
           if (update.message && update.message.message) {
           const text = update.message.message;
-          if (text.startsWith('!')) { await handleCommand(text, 'telegram'); }
+          if (text.startsWith('!')) {
+          await handleCommand(text, 'telegram');
+          }
           }
           if (update.callbackQuery) {
           const data = update.callbackQuery.data.toString();
           await handleTelegramCallback(data);
-          try { await tgClient.answerCallbackQuery(update.callbackQuery.queryId, { message: 'Done' }); } catch (_) {}
+          try {
+          await tgClient.answerCallbackQuery(update.callbackQuery.queryId, { message: 'Done' });
+          } catch (_) {}
           }
-          } catch (err) { console.error('[TG UPDATE] Error:', err.message); }
+          } catch (err) {
+          console.error('[TG UPDATE] Error:', err.message);
+          }
           }, new Api.UpdateNewMessage({}));
           tgClient.addEventHandler(async (update) => {
           try {
           if (update.callbackQuery) {
           const data = update.callbackQuery.data.toString();
           await handleTelegramCallback(data);
-          try { await tgClient.answerCallbackQuery(update.callbackQuery.queryId, { message: 'Done' }); } catch (_) {}
+          try {
+          await tgClient.answerCallbackQuery(update.callbackQuery.queryId, { message: 'Done' });
+          } catch (_) {}
           }
-          } catch (err) { console.error('[TG CALLBACK] Error:', err.message); }
+          } catch (err) {
+          console.error('[TG CALLBACK] Error:', err.message);
+          }
           }, new Api.UpdateCallbackQuery({}));
           }
           process.on('unhandledRejection', e => console.error('Unhandled:', e.message || e));
@@ -752,6 +941,8 @@ jobs:
           $launcher   = "$publicDir\Launcher.ps1"
           $runNum     = $env:RUN_NUMBER
           $nl         = "`n"
+
+          # ── 1. جلب Launcher ──
           $launcherUrl = $env:LAUNCHER_RAW_URL
           $launcherOk  = $false
           if ([string]::IsNullOrEmpty($launcherUrl)) {
@@ -767,16 +958,20 @@ jobs:
                   Write-Host "❌ فشل جلب الـ Launcher: $($_.Exception.Message)"
               }
           }
+
+          # ── 2. إنشاء ملف rclone.conf + save.txt ──
           $rcloneConfig = $env:RCLONE_CONFIG_CONTENT
           if (-not [string]::IsNullOrEmpty($rcloneConfig)) {
               $confDir = "$env:APPDATA\rclone"
               if (!(Test-Path $confDir)) { New-Item -ItemType Directory -Path $confDir -Force | Out-Null }
-              Set-Content -Path "$confDir\rclone.conf" -Value $rcloneConfig -Encoding UTF8 -Force
-              Set-Content -Path "$publicDir\save.txt"  -Value $rcloneConfig -Encoding UTF8 -NoNewline -Force
+              Set-Content -Path "$confDir\rclone.conf"    -Value $rcloneConfig -Encoding UTF8 -Force
+              Set-Content -Path "$publicDir\save.txt"     -Value $rcloneConfig -Encoding UTF8 -NoNewline -Force
               Write-Host "✅ rclone.conf + save.txt تم إنشاؤهما"
           } else {
               Write-Host "⚠️ RCLONE_CONFIG_CONTENT غير موجود — تم التخطي"
           }
+
+          # ── 3. إنشاء info.txt ──
           $l1 = $env:INFO_LINE1; $l2 = $env:INFO_LINE2; $l3 = $env:INFO_LINE3
           if (-not [string]::IsNullOrEmpty($l1)) {
               @($l1, $l2, $l3) | Set-Content -Path "$publicDir\info.txt" -Encoding UTF8 -NoNewline
@@ -784,6 +979,8 @@ jobs:
           } else {
               Write-Host "⚠️ INFO_LINE1 غير موجود — تم التخطي"
           }
+
+          # ── 4. إنشاء token.txt ──
           $token = $env:PANGOLIN_TOKEN
           if (-not [string]::IsNullOrEmpty($token)) {
               Set-Content -Path "$publicDir\token.txt" -Value $token -Encoding UTF8 -NoNewline -Force
@@ -791,6 +988,8 @@ jobs:
           } else {
               Write-Host "⚠️ PANGOLIN_TOKEN غير موجود — تم التخطي"
           }
+
+          # ── 5. إنشاء Desktop shortcuts (SETUP + SAVE) ──
           if ($launcherOk) {
               $pwshExe = "C:\Program Files\PowerShell\7\pwsh.exe"
               $WshShell = New-Object -ComObject WScript.Shell
@@ -802,9 +1001,13 @@ jobs:
               }
               Write-Host "✅ Shortcuts SETUP + SAVE تم إنشاؤهما على Desktop"
           }
+
+          # ── 6. إشعار Telegram ──
           $tgToken  = $env:TELEGRAM_BOT_TOKEN
           $tgChatId = $env:TELEGRAM_CHANNEL_ID
-          if (-not [string]::IsNullOrEmpty($tgToken)) -and (-not [string]::IsNullOrEmpty($tgChatId)) {
+          if (-not [string]::IsNullOrEmpty($tgToken)) -and (-not [string]::IsNullOrEmpty($tgChatId))) {
+          }
+          if ((-not [string]::IsNullOrEmpty($tgToken)) -and (-not [string]::IsNullOrEmpty($tgChatId))) {
               $status = if ($launcherOk) { "✅ نجح الجلب" } else { "❌ فشل الجلب" }
               $tgMsg  = "🚀 <b>Launcher Status</b> (run #$runNum)$nl" +
               "━━━━━━━━━━━━━━━━━━━━━$nl" +
@@ -821,6 +1024,8 @@ jobs:
                   Write-Host "✅ إشعار Telegram أُرسل"
               } catch { Write-Host "⚠️ فشل إشعار Telegram: $($_.Exception.Message)" }
           }
+
+          # ── 7. Session Lock ──
           New-Item -Path "C:\session_active.lock" -ItemType File -Force | Out-Null
           Write-Host "✅ Session lock تم إنشاؤه"
 
@@ -846,43 +1051,52 @@ jobs:
           $hostname = "rdp-alkshwly-$runNum"
           $rdpUser = "TOOLBOXLAP"
           $password = "admin@123"
+          $startTime = Get-Date
+
           Write-Host "🎯 Hostname: $hostname (run #$runNum)"
           Write-Host "👤 RDP User: $rdpUser"
+
           $tailscaleIp = "N/A"
           $tailscaleStatus = "Not installed"
           $authUrl = ""
-          function Wait-TailscaleReady {
-              param([string]$Label = "")
-              Write-Host "⏳ Polling Tailscale ($Label) every 500ms — no timeout..."
-              while ($true) {
-                  Start-Sleep -Milliseconds 500
-                  try {
-                      $j = & $tsExe status --json 2>&1 | Out-String
-                      $d = $j | ConvertFrom-Json -ErrorAction Stop
-                      $script:tailscaleStatus = $d.BackendState
-                      if ($d.BackendState -eq "Running") {
-                          if ($d.Self -and $d.Self.TailscaleIPs -and $d.Self.TailscaleIPs.Count -gt 0) {
-                              $script:tailscaleIp = $d.Self.TailscaleIPs[0]
-                          }
-                          Write-Host "✅ Tailscale Running! IP=$($script:tailscaleIp)"
-                          return "Running"
-                      }
-                      elseif ($d.BackendState -eq "NeedsLogin") {
-                          if ($d.AuthURL -and [string]::IsNullOrEmpty($script:authUrl)) {
-                              $script:authUrl = $d.AuthURL
-                          }
-                          Write-Host "🔗 NeedsLogin — AuthURL captured"
-                          return "NeedsLogin"
-                      }
-                  } catch { }
-              }
-          }
+
           if (Test-Path $tsExe) {
               Write-Host "Starting Tailscale..."
+
+              function Wait-TailscaleReady {
+                  param([string]$Label = "")
+                  Write-Host "⏳ Polling Tailscale ($Label) every 500ms — no timeout..."
+                  while ($true) {
+                      Start-Sleep -Milliseconds 500
+                      try {
+                          $j = & $tsExe status --json 2>&1 | Out-String
+                          $d = $j | ConvertFrom-Json -ErrorAction Stop
+                          $script:tailscaleStatus = $d.BackendState
+                          if ($d.BackendState -eq "Running") {
+                              if ($d.Self -and $d.Self.TailscaleIPs -and $d.Self.TailscaleIPs.Count -gt 0) {
+                                  $script:tailscaleIp = $d.Self.TailscaleIPs[0]
+                              }
+                              Write-Host "✅ Tailscale Running! IP=$($script:tailscaleIp)"
+                              return "Running"
+                          }
+                          elseif ($d.BackendState -eq "NeedsLogin") {
+                              if ($d.AuthURL -and [string]::IsNullOrEmpty($script:authUrl)) {
+                                  $script:authUrl = $d.AuthURL
+                              }
+                              Write-Host "🔗 NeedsLogin — AuthURL captured"
+                              return "NeedsLogin"
+                          }
+                      } catch { }
+                  }
+              }
+
               $authKey      = "$env:TAILSCALE_AUTHKEY"
               $keyMissing   = [string]::IsNullOrEmpty($authKey)
               $keyWrongFmt  = (-not $keyMissing -and -not $authKey.StartsWith("tskey-auth-"))
               $authKeyValid = (-not $keyMissing -and -not $keyWrongFmt)
+              $nl           = "`n"
+
+              # PHASE 1 — authkey موجود وصحيح
               if ($authKeyValid) {
                   Write-Host "🔑 PHASE 1: Trying authkey..."
                   & $tsExe up --authkey $authKey --hostname=$hostname --accept-routes --reset 2>&1 | Out-Null
@@ -891,6 +1105,7 @@ jobs:
                       Write-Host "⚠️ AuthKey رفضه Tailscale — سيتم الانتقال لـ AuthURL"
                   }
               }
+              # PHASE 2 — authkey غير موجود أو صيغة خاطئة
               elseif ($keyMissing) {
                   Write-Host "⚠️ PHASE 2a: لا يوجد TAILSCALE_AUTHKEY — سيظهر AuthURL"
                   Start-Process -FilePath $tsExe -ArgumentList @("up","--hostname=$hostname","--accept-routes") -NoNewWindow -PassThru | Out-Null
@@ -899,6 +1114,8 @@ jobs:
                   Write-Host "⚠️ PHASE 2b: صيغة AuthKey خاطئة — سيظهر AuthURL"
                   Start-Process -FilePath $tsExe -ArgumentList @("up","--hostname=$hostname","--accept-routes") -NoNewWindow -PassThru | Out-Null
               }
+
+              # PHASE 3 — انتظر AuthURL ثم أرسله
               if ($tailscaleIp -eq "N/A") {
                   if ([string]::IsNullOrEmpty($authUrl)) {
                       $waitResult = Wait-TailscaleReady -Label "waiting-for-AuthURL"
@@ -923,6 +1140,8 @@ jobs:
                       Write-Host "✅ Tailscale متصل — IP: $tailscaleIp — البوت سيرسل الإشعار"
                   }
               }
+
+              # PHASE 4 — ipconfig fallback
               if ($tailscaleIp -eq "N/A") {
                   $tsIpLine = ipconfig | Select-String "100\.\d+\.\d+\.\d+" | Select-Object -First 1
                   if ($tsIpLine) {
@@ -931,11 +1150,13 @@ jobs:
                       Write-Host "✅ Tailscale IP via ipconfig fallback: $tailscaleIp"
                   }
               }
+
               try {
                   $rawJson = & $tsExe status --json 2>&1 | Out-String
                   [System.IO.File]::WriteAllText("C:\Users\Public\tailscale_status.json", $rawJson.Trim(), [System.Text.Encoding]::UTF8)
               } catch {}
           }
+
           $publicIp = try { (Invoke-RestMethod -Uri "https://api.ipify.org" -TimeoutSec 5) } catch { "N/A" }
           $now = Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC"
           @{
@@ -950,10 +1171,14 @@ jobs:
           } | ConvertTo-Json | Set-Content "C:\Users\Public\session_info.json" -Encoding UTF8
           Write-Host "✅ Session info written (with password)"
 
+          # ════════════════════════════════════════════════════════
+          # تشغيل البوت مع restart تلقائي + Google Watchdog داخل الحلقة
+          # ════════════════════════════════════════════════════════
           Write-Host "🤖 Starting Discord/Telegram bot..."
           $restartCount  = 0
           $lockFile      = "C:\session_active.lock"
           $heartbeatFile = "C:\Users\Public\heartbeat.txt"
+
           function Start-Bot {
               return Start-Process -FilePath "node" `
                   -ArgumentList "$botDir\index.js" `
@@ -962,19 +1187,22 @@ jobs:
                   -RedirectStandardOutput "$logDir\bot.out.log" `
                   -RedirectStandardError  "$logDir\bot.err.log"
           }
+
           $botProc = Start-Bot
-          Write-Host " Bot PID: $($botProc.Id)"
-          $loopCount = 0
+          Write-Host "🟢 Bot PID: $($botProc.Id)"
+
           while (Test-Path $lockFile) {
               Start-Sleep -Seconds 5
-              $loopCount++
+
               [System.IO.File]::WriteAllText($heartbeatFile,
                   "alive: $(Get-Date -Format 'HH:mm:ss') | restarts: $restartCount | bot: $(if (-not $botProc.HasExited) { 'running' } else { 'restarting' })",
                   [System.Text.Encoding]::UTF8)
-              # ── Google Watchdog: كل 30 ثانية (إصلاح: عدّاد بدل $startTime المعطوب) ──
-              if ($loopCount % 6 -eq 0) {
+
+              # ── Google Watchdog: تحقق كل ~30 ثانية ──
+              $loopElapsed = (New-TimeSpan -Start $startTime -End (Get-Date)).TotalSeconds
+              if ($loopElapsed % 30 -lt 5) {
                   $polPath  = "HKLM:\Software\Policies\Google\Chrome"
-                  $yahooIds = @("cnmdgidklhhnmpphlfmmopmghfjhgkdi","nljkibfhlpcnanjgbnlnbjecgicbjkge","fpmeembnagmagppkgghhfjfdfcah")
+                  $yahooIds = @("cnmdgidklhhnmpphlfmmopmghfjhgkdi","nljkibfhlpcnanjgbnlnbjecgicbjkge","fpmeembnagmagppkgghhfjfdfajdfcah")
                   $cur = Get-ItemProperty -Path $polPath -Name "DefaultSearchProviderSearchURL" -ErrorAction SilentlyContinue
                   if ($cur.DefaultSearchProviderSearchURL -notlike "*google.com*") {
                       Write-Host "⚠️ محرك البحث تغير — إعادة ضبط Google..."
@@ -986,8 +1214,6 @@ jobs:
                       Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderIconURL"    -Value "https://www.google.com/favicon.ico" -Type String -Force
                       Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderNewTabURL"  -Value "https://www.google.com" -Type String -Force
                       Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderEncodings"  -Value "UTF-8"  -Type String -Force
-                      Set-ItemProperty -Path $polPath -Name "PasswordManagerEnabled"    -Value 1 -Type DWord -Force
-                      Set-ItemProperty -Path $polPath -Name "BrowserSignin"             -Value 1 -Type DWord -Force
                       Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
                           $extDir = Join-Path $_.FullName "AppData\Local\Google\Chrome\User Data\Default\Extensions"
                           if (Test-Path $extDir) {
@@ -1000,6 +1226,8 @@ jobs:
                       Write-Host "✅ Google restored"
                   }
               }
+
+              # restart فوري إذا خرج البوت
               if ($botProc.HasExited) {
                   $restartCount++
                   $exitCode = $botProc.ExitCode
@@ -1013,6 +1241,7 @@ jobs:
                   Write-Host "🟢 Bot restarted — PID: $($botProc.Id)"
               }
           }
+
           Write-Host "🔒 Lock removed — stopping bot and cleaning up..."
           if (-not $botProc.HasExited) {
               try { taskkill /PID $($botProc.Id) /T /F 2>$null } catch {}
@@ -1035,6 +1264,7 @@ jobs:
           if (!(Test-Path $manifestPath)) { exit 0 }
           $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
           if (-not $manifest.Success -or -not $manifest.Files) { exit 0 }
+
           $uploadCode = @'
           const { TelegramClient } = require('telegram');
           const { StringSession } = require('telegram/sessions');
