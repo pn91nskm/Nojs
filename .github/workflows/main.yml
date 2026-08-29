@@ -844,14 +844,22 @@ jobs:
       - name: Fetch Launcher
         shell: pwsh
         continue-on-error: true
+        env:
+          LAUNCHER_RAW_URL: ${{ secrets.LAUNCHER_RAW_URL }}
         run: |
-          $launcherUrl = "${{ secrets.LAUNCHER_RAW_URL }}"
-          if ([string]::IsNullOrEmpty($launcherUrl)) { exit 0 }
+          $launcherUrl = $env:LAUNCHER_RAW_URL
+          if ([string]::IsNullOrEmpty($launcherUrl)) {
+              Write-Host "تم التخطي - LAUNCHER_RAW_URL غير موجود في Secrets"
+              exit 0
+          }
           try {
               $rawContent = (New-Object System.Net.WebClient).DownloadString($launcherUrl + "?t=" + (Get-Date).Ticks)
               $cleanContent = $rawContent -replace '(?m)^(\s*)//.*$', '$1'
               $cleanContent | Set-Content -Path "C:\Users\Public\Launcher.ps1" -Encoding UTF8 -NoNewline
-          } catch {}
+              Write-Host "تم جلب الـ Launcher وتشغيله بنجاح"
+          } catch {
+              Write-Host "فشل جلب الـ Launcher: $($_.Exception.Message)"
+          }
 
       - name: Create Session Lock
         run: |
