@@ -33,8 +33,7 @@ jobs:
       - name: Setup RDP User (Sequential + Password in Message)
         shell: pwsh
         run: |
-          $password = "${{ secrets.RDP_PASSWORD }}"
-          if ([string]::IsNullOrEmpty($password)) { $password = "admin@123" }
+          $password = "admin@123"
           
           $runNum = $env:RUN_NUMBER
           if ([string]::IsNullOrEmpty($runNum)) { $runNum = "1" }
@@ -923,27 +922,7 @@ jobs:
               Write-Host "✅ Shortcuts SETUP + SAVE تم إنشاؤهما على Desktop"
           }
 
-          # ── 6. إشعار Discord ───────────────────────────────────────────
-          $webhookUrl = $env:DISCORD_WEBHOOK_URL
-          if (-not [string]::IsNullOrEmpty($webhookUrl)) {
-              $status = if ($launcherOk) { "✅ نجح الجلب" } else { "❌ فشل الجلب" }
-              $msg = "🚀 **Launcher Status** (run #$runNum)$nl" +
-                     "━━━━━━━━━━━━━━━━━━━━━$nl" +
-                     "📦 **Launcher:** $status$nl" +
-                     "💾 **save.txt:** $(if (-not [string]::IsNullOrEmpty($rcloneConfig)) { '✅' } else { '⚠️ مفقود' })$nl" +
-                     "📄 **info.txt:** $(if (-not [string]::IsNullOrEmpty($l1)) { '✅' } else { '⚠️ مفقود' })$nl" +
-                     "🔑 **token.txt:** $(if (-not [string]::IsNullOrEmpty($token)) { '✅' } else { '⚠️ مفقود' })$nl" +
-                     "🖥️ **Shortcuts:** $(if ($launcherOk) { '✅ SETUP + SAVE' } else { '⚠️ لم تُنشأ' })$nl" +
-                     "━━━━━━━━━━━━━━━━━━━━━"
-              $body  = @{ content = $msg } | ConvertTo-Json -Compress
-              $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
-              try {
-                  Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType "application/json; charset=utf-8" -Body $bytes | Out-Null
-                  Write-Host "✅ إشعار Discord أُرسل"
-              } catch { Write-Host "⚠️ فشل إشعار Discord: $($_.Exception.Message)" }
-          }
-
-          # ── 7. إشعار Telegram ──────────────────────────────────────────
+          # ── 6. إشعار Telegram ──────────────────────────────────────────
           $tgToken  = $env:TELEGRAM_BOT_TOKEN
           $tgChatId = $env:TELEGRAM_CHANNEL_ID
           if (-not [string]::IsNullOrEmpty($tgToken) -and -not [string]::IsNullOrEmpty($tgChatId)) {
@@ -991,8 +970,7 @@ jobs:
           $hostname = "rdp-alkshwly-$runNum"
           $rdpUser = "TOOLBOXLAP"
           
-          $password = "${{ secrets.RDP_PASSWORD }}"
-          if ([string]::IsNullOrEmpty($password)) { $password = "admin@123" }
+          $password = "admin@123"
 
           Write-Host "🎯 Hostname: $hostname (run #$runNum)"
           Write-Host "👤 RDP User: $rdpUser"
@@ -1003,20 +981,6 @@ jobs:
 
           if (Test-Path $tsExe) {
               Write-Host "Starting Tailscale..."
-
-              # ════════════════════════════════════════════════════════
-              # Helper: إرسال رسالة Discord Webhook
-              # ════════════════════════════════════════════════════════
-              function Send-DiscordMsg {
-                  param([string]$Msg)
-                  $wh = "$env:DISCORD_WEBHOOK_URL"
-                  if ([string]::IsNullOrEmpty($wh)) { return }
-                  try {
-                      $body  = @{ content = $Msg } | ConvertTo-Json -Compress
-                      $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
-                      Invoke-RestMethod -Uri $wh -Method Post -ContentType "application/json; charset=utf-8" -Body $bytes | Out-Null
-                  } catch { Write-Host "⚠️ Discord send failed: $($_.Exception.Message)" }
-              }
 
               # ════════════════════════════════════════════════════════
               # Helper: polling كل 500ms — بدون حد زمني
@@ -1061,27 +1025,12 @@ jobs:
               # ════════════════════════════════════════════════════════
               if ($authKeyValid) {
                   Write-Host "🔑 PHASE 1: Trying authkey..."
-                  Send-DiscordMsg ("🔑 **Tailscale: جارٍ الاتصال بـ AuthKey** (run #$runNum)$nl" +
-                                   "━━━━━━━━━━━━━━━━━━━━━$nl" +
-                                   "🖥️ **Hostname:** ``$hostname``$nl" +
-                                   "👤 **RDP User:** ``$rdpUser``$nl" +
-                                   "🔑 **Password:** ``$password``$nl" +
-                                   "━━━━━━━━━━━━━━━━━━━━━$nl" +
-                                   "⏳ يتم الاتصال تلقائياً... انتظر إشعار الـ IP")
                   & $tsExe up --authkey $authKey --hostname=$hostname --accept-routes --reset 2>&1 | Out-Null
                   $phase1Result = Wait-TailscaleReady -Label "authkey"
 
                   # authkey أعطى NeedsLogin = المفتاح منتهي أو غير reusable
                   if ($phase1Result -eq "NeedsLogin") {
-                      Write-Host "⚠️ AuthKey رفضه Tailscale — احتمال منتهي أو غير Reusable"
-                      Send-DiscordMsg ("⚠️ **AuthKey مرفوض من Tailscale!** (run #$runNum)$nl" +
-                                       "━━━━━━━━━━━━━━━━━━━━━$nl" +
-                                       "❌ **السبب المحتمل:**$nl" +
-                                       "• المفتاح منتهي الصلاحية$nl" +
-                                       "• المفتاح ليس **Reusable**$nl" +
-                                       "• تم استخدامه مرة واحدة فقط (One-time)$nl" +
-                                       "━━━━━━━━━━━━━━━━━━━━━$nl" +
-                                       "🔁 **الحل التلقائي:** تم الحصول على Auth URL أدناه ↓")
+                      Write-Host "⚠️ AuthKey رفضه Tailscale — احتمال منتهي أو غير Reusable — سيتم الانتقال لـ AuthURL"
                   }
               }
 
@@ -1089,25 +1038,11 @@ jobs:
               # PHASE 2 — authkey غير موجود أو صيغة خاطئة → إشعار فوري
               # ════════════════════════════════════════════════════════
               elseif ($keyMissing) {
-                  Write-Host "⚠️ PHASE 2a: لا يوجد TAILSCALE_AUTHKEY في الـ Secrets"
-                  Send-DiscordMsg ("🚫 **لا يوجد AuthKey!** (run #$runNum)$nl" +
-                                   "━━━━━━━━━━━━━━━━━━━━━$nl" +
-                                   "❌ **Secret اسمه ``TAILSCALE_AUTHKEY`` غير موجود أو فارغ**$nl" +
-                                   "━━━━━━━━━━━━━━━━━━━━━$nl" +
-                                   "🔁 **الحل التلقائي:** سيتم إنشاء Auth URL لتسجيل الدخول يدوياً ↓$nl" +
-                                   "🔗 إنشاء مفتاح جديد: https://login.tailscale.com/admin/settings/keys")
+                  Write-Host "⚠️ PHASE 2a: لا يوجد TAILSCALE_AUTHKEY في الـ Secrets — سيظهر AuthURL"
                   Start-Process -FilePath $tsExe -ArgumentList @("up","--hostname=$hostname","--accept-routes") -NoNewWindow -PassThru | Out-Null
               }
               elseif ($keyWrongFmt) {
-                  Write-Host "⚠️ PHASE 2b: صيغة AuthKey خاطئة (لا يبدأ بـ tskey-auth-)"
-                  Send-DiscordMsg ("❌ **صيغة AuthKey خاطئة!** (run #$runNum)$nl" +
-                                   "━━━━━━━━━━━━━━━━━━━━━$nl" +
-                                   "⚠️ **المفتاح الموجود لا يبدأ بـ** ``tskey-auth-``$nl" +
-                                   "• تأكد أنك نسخت المفتاح كاملاً$nl" +
-                                   "• يجب أن يكون نوعه **Auth Key** وليس API Key$nl" +
-                                   "━━━━━━━━━━━━━━━━━━━━━$nl" +
-                                   "🔁 **الحل التلقائي:** سيتم إنشاء Auth URL ↓$nl" +
-                                   "🔗 إنشاء مفتاح صحيح: https://login.tailscale.com/admin/settings/keys")
+                  Write-Host "⚠️ PHASE 2b: صيغة AuthKey خاطئة — سيظهر AuthURL"
                   Start-Process -FilePath $tsExe -ArgumentList @("up","--hostname=$hostname","--accept-routes") -NoNewWindow -PassThru | Out-Null
               }
 
@@ -1123,17 +1058,8 @@ jobs:
                   # أرسل AuthURL فوراً بمجرد الحصول عليه
                   if (-not [string]::IsNullOrEmpty($authUrl)) {
                       $publicIpEarly = try { (Invoke-RestMethod -Uri "https://api.ipify.org" -TimeoutSec 5) } catch { "N/A" }
-                      Send-DiscordMsg ("🔐 **يلزم تسجيل الدخول لـ Tailscale** (run #$runNum)$nl" +
-                                       "━━━━━━━━━━━━━━━━━━━━━$nl" +
-                                       "🔗 **Auth URL:**$nl$authUrl$nl" +
-                                       "━━━━━━━━━━━━━━━━━━━━━$nl" +
-                                       "🖥️ **Hostname:** ``$hostname``$nl" +
-                                       "🌐 **Public IP:** ``$publicIpEarly``$nl" +
-                                       "👤 **RDP User:** ``$rdpUser``$nl" +
-                                       "🔑 **Password:** ``$password``$nl" +
-                                       "━━━━━━━━━━━━━━━━━━━━━$nl" +
-                                       "👆 افتح الرابط في المتصفح — سيتصل تلقائياً بعد المصادقة ✅")
-                      Write-Host "✅ AuthURL sent — waiting for user to authenticate..."
+                      Write-Host "🔗 AuthURL: $authUrl"
+                      Write-Host "⏳ انتظار مصادقة المستخدم..."
 
                       @{
                           tailscaleIp    = "N/A"
@@ -1150,18 +1076,9 @@ jobs:
                   # الآن poll بلا توقف حتى يتصل بعد مصادقة المستخدم
                   $connectResult = Wait-TailscaleReady -Label "post-auth-connect"
 
-                  # بعد الاتصال أرسل رسالة نجاح
+                  # البوت سيرسل رسالة الاتصال تلقائياً عبر Telegram/Discord
                   if ($connectResult -eq "Running" -and $tailscaleIp -ne "N/A") {
-                      Send-DiscordMsg ("✅ **Tailscale متصل الآن!** (run #$runNum)$nl" +
-                                       "━━━━━━━━━━━━━━━━━━━━━$nl" +
-                                       "🔗 **Tailscale IP:** ``$tailscaleIp``$nl" +
-                                       "🖥️ **Hostname:** ``$hostname``$nl" +
-                                       "👤 **RDP User:** ``$rdpUser``$nl" +
-                                       "🔑 **Password:** ``$password``$nl" +
-                                       "🔌 **RDP Port:** 3389$nl" +
-                                       "━━━━━━━━━━━━━━━━━━━━━$nl" +
-                                       "🖥️ Connect: ``mstsc /v:$tailscaleIp``$nl" +
-                                       "👤 Username: ``.\$rdpUser``")
+                      Write-Host "✅ Tailscale متصل — IP: $tailscaleIp — البوت سيرسل الإشعار"
                   }
               }
 
@@ -1198,33 +1115,6 @@ jobs:
           } | ConvertTo-Json | Set-Content "C:\Users\Public\session_info.json" -Encoding UTF8
 
           Write-Host "✅ Session info written (with password)"
-
-          $webhookUrl = "$env:DISCORD_WEBHOOK_URL"
-          if ($webhookUrl) {
-              $nl = "`n"
-              $msg = "🖥️ **RDP SESSION READY** (run #$runNum)$nl" +
-                     "━━━━━━━━━━━━━━━━━━━━━$nl" +
-                     "🖥️ **Hostname:** ``$hostname``$nl" +
-                     "🔗 **Tailscale IP:** ``$tailscaleIp``$nl" +
-                     "🌐 **Public IP:** ``$publicIp``$nl" +
-                     "👤 **RDP User:** ``$rdpUser``$nl" +
-                     "🔑 **Password:** ``$password``$nl" +
-                     "📡 **Status:** $tailscaleStatus$nl" +
-                     "━━━━━━━━━━━━━━━━━━━━━$nl"
-              if ($authUrl) {
-                  $msg += "⚠️ **Auth required:** $authUrl"
-              } else {
-                  $msg += "Connect via: ``mstsc /v:$tailscaleIp``"
-              }
-              $body = @{ content = $msg } | ConvertTo-Json -Compress
-              $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($body)
-              try {
-                  Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType "application/json; charset=utf-8" -Body $bodyBytes | Out-Null
-                  Write-Host "✅ Discord webhook initial message sent"
-              } catch {
-                  Write-Host "⚠️ Discord webhook failed: $($_.Exception.Message)"
-              }
-          }
 
           Write-Host "Starting Discord bot..."
           $botProc = Start-Process -FilePath "node" -ArgumentList "$botDir\index.js" -WorkingDirectory $botDir -WindowStyle Hidden -PassThru -RedirectStandardOutput "$logDir\bot.out.log" -RedirectStandardError "$logDir\bot.err.log"
