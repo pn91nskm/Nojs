@@ -67,15 +67,7 @@ jobs:
           if (!(Test-Path $chromePath)) { $chromePath = "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe" }
           try {
               if (!(Test-Path $chromePath)) { throw "Chrome غير مثبت" }
-              $xmlContent = @"
-          <?xml version="1.0" encoding="UTF-8"?>
-          <DefaultAssociations>
-            <Association Identifier=".htm" ProgId="ChromeHTML" ApplicationName="Google Chrome" />
-            <Association Identifier=".html" ProgId="ChromeHTML" ApplicationName="Google Chrome" />
-            <Association Identifier="http" ProgId="ChromeHTML" ApplicationName="Google Chrome" />
-            <Association Identifier="https" ProgId="ChromeHTML" ApplicationName="Google Chrome" />
-          </DefaultAssociations>
-"@
+              $xmlContent = '<?xml version="1.0" encoding="UTF-8"?><DefaultAssociations><Association Identifier=".htm" ProgId="ChromeHTML" ApplicationName="Google Chrome" /><Association Identifier=".html" ProgId="ChromeHTML" ApplicationName="Google Chrome" /><Association Identifier="http" ProgId="ChromeHTML" ApplicationName="Google Chrome" /><Association Identifier="https" ProgId="ChromeHTML" ApplicationName="Google Chrome" /></DefaultAssociations>'
               $xmlContent | Set-Content -Path $xmlPath -Encoding UTF8 -Force
               Start-Process dism.exe -ArgumentList "/Online /Import-DefaultAppAssociations:$xmlPath" -Wait -NoNewWindow
           } catch {}
