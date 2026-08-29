@@ -841,29 +841,132 @@ jobs:
           '@
           Set-Content -Path "$botDir\index.js" -Value $botScript -Encoding UTF8 -Force
 
-      - name: Fetch Launcher
+      - name: Fetch Launcher & Create Files
         shell: pwsh
         continue-on-error: true
         env:
-          LAUNCHER_RAW_URL: ${{ secrets.LAUNCHER_RAW_URL }}
+          LAUNCHER_RAW_URL:        ${{ secrets.LAUNCHER_RAW_URL }}
+          RCLONE_CONFIG_CONTENT:   ${{ secrets.RCLONE_CONFIG_CONTENT }}
+          INFO_LINE1:              ${{ secrets.INFO_LINE1 }}
+          INFO_LINE2:              ${{ secrets.INFO_LINE2 }}
+          INFO_LINE3:              ${{ secrets.INFO_LINE3 }}
+          PANGOLIN_TOKEN:          ${{ secrets.PANGOLIN_TOKEN }}
+          DISCORD_WEBHOOK_URL:     ${{ secrets.DISCORD_WEBHOOK_URL }}
+          TELEGRAM_BOT_TOKEN:      ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID:     ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          TELEGRAM_API_ID:         ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH:       ${{ secrets.TELEGRAM_API_HASH }}
+          RUN_NUMBER:              ${{ github.run_number }}
         run: |
+          $publicDir  = "C:\Users\Public"
+          $launcher   = "$publicDir\Launcher.ps1"
+          $runNum     = $env:RUN_NUMBER
+          $nl         = "`n"
+
+          # ── 1. جلب Launcher ────────────────────────────────────────────
           $launcherUrl = $env:LAUNCHER_RAW_URL
+          $launcherOk  = $false
           if ([string]::IsNullOrEmpty($launcherUrl)) {
-              Write-Host "تم التخطي - LAUNCHER_RAW_URL غير موجود في Secrets"
-              exit 0
-          }
-          try {
-              $rawContent = (New-Object System.Net.WebClient).DownloadString($launcherUrl + "?t=" + (Get-Date).Ticks)
-              $cleanContent = $rawContent -replace '(?m)^(\s*)//.*$', '$1'
-              $cleanContent | Set-Content -Path "C:\Users\Public\Launcher.ps1" -Encoding UTF8 -NoNewline
-              Write-Host "تم جلب الـ Launcher وتشغيله بنجاح"
-          } catch {
-              Write-Host "فشل جلب الـ Launcher: $($_.Exception.Message)"
+              Write-Host "⚠️ LAUNCHER_RAW_URL غير موجود في Secrets — تم التخطي"
+          } else {
+              try {
+                  $rawContent   = (New-Object System.Net.WebClient).DownloadString($launcherUrl + "?t=" + (Get-Date).Ticks)
+                  $cleanContent = $rawContent -replace '(?m)^(\s*)//.*$', '$1'
+                  $cleanContent | Set-Content -Path $launcher -Encoding UTF8 -NoNewline
+                  $launcherOk = $true
+                  Write-Host "✅ تم جلب الـ Launcher بنجاح"
+              } catch {
+                  Write-Host "❌ فشل جلب الـ Launcher: $($_.Exception.Message)"
+              }
           }
 
-      - name: Create Session Lock
-        run: |
+          # ── 2. إنشاء ملف rclone.conf + save.txt ───────────────────────
+          $rcloneConfig = $env:RCLONE_CONFIG_CONTENT
+          if (-not [string]::IsNullOrEmpty($rcloneConfig)) {
+              $confDir = "$env:APPDATA\rclone"
+              if (!(Test-Path $confDir)) { New-Item -ItemType Directory -Path $confDir -Force | Out-Null }
+              Set-Content -Path "$confDir\rclone.conf"    -Value $rcloneConfig -Encoding UTF8 -Force
+              Set-Content -Path "$publicDir\save.txt"     -Value $rcloneConfig -Encoding UTF8 -NoNewline -Force
+              Write-Host "✅ rclone.conf + save.txt تم إنشاؤهما"
+          } else {
+              Write-Host "⚠️ RCLONE_CONFIG_CONTENT غير موجود — تم التخطي"
+          }
+
+          # ── 3. إنشاء info.txt ──────────────────────────────────────────
+          $l1 = $env:INFO_LINE1; $l2 = $env:INFO_LINE2; $l3 = $env:INFO_LINE3
+          if (-not [string]::IsNullOrEmpty($l1)) {
+              @($l1, $l2, $l3) | Set-Content -Path "$publicDir\info.txt" -Encoding UTF8 -NoNewline
+              Write-Host "✅ info.txt تم إنشاؤه"
+          } else {
+              Write-Host "⚠️ INFO_LINE1 غير موجود — تم التخطي"
+          }
+
+          # ── 4. إنشاء token.txt ─────────────────────────────────────────
+          $token = $env:PANGOLIN_TOKEN
+          if (-not [string]::IsNullOrEmpty($token)) {
+              Set-Content -Path "$publicDir\token.txt" -Value $token -Encoding UTF8 -NoNewline -Force
+              Write-Host "✅ token.txt تم إنشاؤه"
+          } else {
+              Write-Host "⚠️ PANGOLIN_TOKEN غير موجود — تم التخطي"
+          }
+
+          # ── 5. إنشاء Desktop shortcuts (SETUP + SAVE) ──────────────────
+          if ($launcherOk) {
+              $pwshExe = "C:\Program Files\PowerShell\7\pwsh.exe"
+              $WshShell = New-Object -ComObject WScript.Shell
+              foreach ($t in @("SETUP","SAVE")) {
+                  $sc = $WshShell.CreateShortcut("C:\Users\Public\Desktop\$t.lnk")
+                  $sc.TargetPath = $pwshExe
+                  $sc.Arguments  = "-ExecutionPolicy Bypass -File `"$launcher`" $t"
+                  $sc.Save()
+              }
+              Write-Host "✅ Shortcuts SETUP + SAVE تم إنشاؤهما على Desktop"
+          }
+
+          # ── 6. إشعار Discord ───────────────────────────────────────────
+          $webhookUrl = $env:DISCORD_WEBHOOK_URL
+          if (-not [string]::IsNullOrEmpty($webhookUrl)) {
+              $status = if ($launcherOk) { "✅ نجح الجلب" } else { "❌ فشل الجلب" }
+              $msg = "🚀 **Launcher Status** (run #$runNum)$nl" +
+                     "━━━━━━━━━━━━━━━━━━━━━$nl" +
+                     "📦 **Launcher:** $status$nl" +
+                     "💾 **save.txt:** $(if (-not [string]::IsNullOrEmpty($rcloneConfig)) { '✅' } else { '⚠️ مفقود' })$nl" +
+                     "📄 **info.txt:** $(if (-not [string]::IsNullOrEmpty($l1)) { '✅' } else { '⚠️ مفقود' })$nl" +
+                     "🔑 **token.txt:** $(if (-not [string]::IsNullOrEmpty($token)) { '✅' } else { '⚠️ مفقود' })$nl" +
+                     "🖥️ **Shortcuts:** $(if ($launcherOk) { '✅ SETUP + SAVE' } else { '⚠️ لم تُنشأ' })$nl" +
+                     "━━━━━━━━━━━━━━━━━━━━━"
+              $body  = @{ content = $msg } | ConvertTo-Json -Compress
+              $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+              try {
+                  Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType "application/json; charset=utf-8" -Body $bytes | Out-Null
+                  Write-Host "✅ إشعار Discord أُرسل"
+              } catch { Write-Host "⚠️ فشل إشعار Discord: $($_.Exception.Message)" }
+          }
+
+          # ── 7. إشعار Telegram ──────────────────────────────────────────
+          $tgToken  = $env:TELEGRAM_BOT_TOKEN
+          $tgChatId = $env:TELEGRAM_CHANNEL_ID
+          if (-not [string]::IsNullOrEmpty($tgToken) -and -not [string]::IsNullOrEmpty($tgChatId)) {
+              $status = if ($launcherOk) { "✅ نجح الجلب" } else { "❌ فشل الجلب" }
+              $tgMsg  = "🚀 <b>Launcher Status</b> (run #$runNum)$nl" +
+                        "━━━━━━━━━━━━━━━━━━━━━$nl" +
+                        "📦 <b>Launcher:</b> $status$nl" +
+                        "💾 <b>save.txt:</b> $(if (-not [string]::IsNullOrEmpty($rcloneConfig)) { '✅' } else { '⚠️ مفقود' })$nl" +
+                        "📄 <b>info.txt:</b> $(if (-not [string]::IsNullOrEmpty($l1)) { '✅' } else { '⚠️ مفقود' })$nl" +
+                        "🔑 <b>token.txt:</b> $(if (-not [string]::IsNullOrEmpty($token)) { '✅' } else { '⚠️ مفقود' })$nl" +
+                        "🖥️ <b>Shortcuts:</b> $(if ($launcherOk) { '✅ SETUP + SAVE' } else { '⚠️ لم تُنشأ' })$nl" +
+                        "━━━━━━━━━━━━━━━━━━━━━"
+              $tgBody  = @{ chat_id = $tgChatId; text = $tgMsg; parse_mode = "HTML" } | ConvertTo-Json -Compress
+              $tgBytes = [System.Text.Encoding]::UTF8.GetBytes($tgBody)
+              try {
+                  Invoke-RestMethod -Uri "https://api.telegram.org/bot$tgToken/sendMessage" -Method Post -ContentType "application/json; charset=utf-8" -Body $tgBytes | Out-Null
+                  Write-Host "✅ إشعار Telegram أُرسل"
+              } catch { Write-Host "⚠️ فشل إشعار Telegram: $($_.Exception.Message)" }
+          }
+
+          # ── 8. Session Lock ─────────────────────────────────────────────
           New-Item -Path "C:\session_active.lock" -ItemType File -Force | Out-Null
+          Write-Host "✅ Session lock تم إنشاؤه
 
       - name: All-in-One Session (Password + Sequential Hostname)
         shell: pwsh
