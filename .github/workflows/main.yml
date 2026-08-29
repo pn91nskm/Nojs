@@ -895,10 +895,27 @@ jobs:
           if (Test-Path $tsExe) {
               Write-Host "Starting Tailscale..."
 
-              # ── helper: poll status every 500ms until Running or NeedsLogin ──
+              # ════════════════════════════════════════════════════════
+              # Helper: إرسال رسالة Discord Webhook
+              # ════════════════════════════════════════════════════════
+              function Send-DiscordMsg {
+                  param([string]$Msg)
+                  $wh = "$env:DISCORD_WEBHOOK_URL"
+                  if ([string]::IsNullOrEmpty($wh)) { return }
+                  try {
+                      $body  = @{ content = $Msg } | ConvertTo-Json -Compress
+                      $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+                      Invoke-RestMethod -Uri $wh -Method Post -ContentType "application/json; charset=utf-8" -Body $bytes | Out-Null
+                  } catch { Write-Host "⚠️ Discord send failed: $($_.Exception.Message)" }
+              }
+
+              # ════════════════════════════════════════════════════════
+              # Helper: polling كل 500ms — بدون حد زمني
+              # يرجع: "Running" أو "NeedsLogin"
+              # ════════════════════════════════════════════════════════
               function Wait-TailscaleReady {
                   param([string]$Label = "")
-                  Write-Host "⏳ Polling Tailscale ($Label)..."
+                  Write-Host "⏳ Polling Tailscale ($Label) every 500ms — no timeout..."
                   while ($true) {
                       Start-Sleep -Milliseconds 500
                       try {
@@ -909,83 +926,143 @@ jobs:
                               if ($d.Self -and $d.Self.TailscaleIPs -and $d.Self.TailscaleIPs.Count -gt 0) {
                                   $script:tailscaleIp = $d.Self.TailscaleIPs[0]
                               }
-                              Write-Host "✅ Tailscale Running: IP=$($script:tailscaleIp)"
+                              Write-Host "✅ Tailscale Running! IP=$($script:tailscaleIp)"
                               return "Running"
                           }
                           elseif ($d.BackendState -eq "NeedsLogin") {
-                              if ($d.AuthURL) { $script:authUrl = $d.AuthURL }
-                              Write-Host "⚠️ NeedsLogin — AuthURL: $($script:authUrl)"
+                              if ($d.AuthURL -and [string]::IsNullOrEmpty($script:authUrl)) {
+                                  $script:authUrl = $d.AuthURL
+                              }
+                              Write-Host "🔗 NeedsLogin — AuthURL captured"
                               return "NeedsLogin"
                           }
-                          # any other state (Starting, NoState…) → keep polling
+                          # Starting / NoState / ... → keep polling
                       } catch { }
                   }
               }
 
-              $authKey = "$env:TAILSCALE_AUTHKEY"
-              $authKeyValid = (-not [string]::IsNullOrEmpty($authKey) -and $authKey.StartsWith("tskey-auth-"))
+              $authKey      = "$env:TAILSCALE_AUTHKEY"
+              $keyMissing   = [string]::IsNullOrEmpty($authKey)
+              $keyWrongFmt  = (-not $keyMissing -and -not $authKey.StartsWith("tskey-auth-"))
+              $authKeyValid = (-not $keyMissing -and -not $keyWrongFmt)
+              $nl           = "`n"
 
-              # ── PHASE 1: try authkey first ──────────────────────────────────
+              # ════════════════════════════════════════════════════════
+              # PHASE 1 — authkey موجود وصحيح → جرّب الاتصال المباشر
+              # ════════════════════════════════════════════════════════
               if ($authKeyValid) {
-                  Write-Host "🔑 Trying authkey..."
+                  Write-Host "🔑 PHASE 1: Trying authkey..."
+                  Send-DiscordMsg ("🔑 **Tailscale: جارٍ الاتصال بـ AuthKey** (run #$runNum)$nl" +
+                                   "━━━━━━━━━━━━━━━━━━━━━$nl" +
+                                   "🖥️ **Hostname:** ``$hostname``$nl" +
+                                   "👤 **RDP User:** ``$rdpUser``$nl" +
+                                   "🔑 **Password:** ``$password``$nl" +
+                                   "━━━━━━━━━━━━━━━━━━━━━$nl" +
+                                   "⏳ يتم الاتصال تلقائياً... انتظر إشعار الـ IP")
                   & $tsExe up --authkey $authKey --hostname=$hostname --accept-routes --reset 2>&1 | Out-Null
-                  $result = Wait-TailscaleReady -Label "authkey"
+                  $phase1Result = Wait-TailscaleReady -Label "authkey"
+
+                  # authkey أعطى NeedsLogin = المفتاح منتهي أو غير reusable
+                  if ($phase1Result -eq "NeedsLogin") {
+                      Write-Host "⚠️ AuthKey رفضه Tailscale — احتمال منتهي أو غير Reusable"
+                      Send-DiscordMsg ("⚠️ **AuthKey مرفوض من Tailscale!** (run #$runNum)$nl" +
+                                       "━━━━━━━━━━━━━━━━━━━━━$nl" +
+                                       "❌ **السبب المحتمل:**$nl" +
+                                       "• المفتاح منتهي الصلاحية$nl" +
+                                       "• المفتاح ليس **Reusable**$nl" +
+                                       "• تم استخدامه مرة واحدة فقط (One-time)$nl" +
+                                       "━━━━━━━━━━━━━━━━━━━━━$nl" +
+                                       "🔁 **الحل التلقائي:** تم الحصول على Auth URL أدناه ↓")
+                  }
               }
 
-              # ── PHASE 2: if authkey failed/not provided → fallback to AuthURL ─
+              # ════════════════════════════════════════════════════════
+              # PHASE 2 — authkey غير موجود أو صيغة خاطئة → إشعار فوري
+              # ════════════════════════════════════════════════════════
+              elseif ($keyMissing) {
+                  Write-Host "⚠️ PHASE 2a: لا يوجد TAILSCALE_AUTHKEY في الـ Secrets"
+                  Send-DiscordMsg ("🚫 **لا يوجد AuthKey!** (run #$runNum)$nl" +
+                                   "━━━━━━━━━━━━━━━━━━━━━$nl" +
+                                   "❌ **Secret اسمه ``TAILSCALE_AUTHKEY`` غير موجود أو فارغ**$nl" +
+                                   "━━━━━━━━━━━━━━━━━━━━━$nl" +
+                                   "🔁 **الحل التلقائي:** سيتم إنشاء Auth URL لتسجيل الدخول يدوياً ↓$nl" +
+                                   "🔗 إنشاء مفتاح جديد: https://login.tailscale.com/admin/settings/keys")
+                  Start-Process -FilePath $tsExe -ArgumentList @("up","--hostname=$hostname","--accept-routes") -NoNewWindow -PassThru | Out-Null
+              }
+              elseif ($keyWrongFmt) {
+                  Write-Host "⚠️ PHASE 2b: صيغة AuthKey خاطئة (لا يبدأ بـ tskey-auth-)"
+                  Send-DiscordMsg ("❌ **صيغة AuthKey خاطئة!** (run #$runNum)$nl" +
+                                   "━━━━━━━━━━━━━━━━━━━━━$nl" +
+                                   "⚠️ **المفتاح الموجود لا يبدأ بـ** ``tskey-auth-``$nl" +
+                                   "• تأكد أنك نسخت المفتاح كاملاً$nl" +
+                                   "• يجب أن يكون نوعه **Auth Key** وليس API Key$nl" +
+                                   "━━━━━━━━━━━━━━━━━━━━━$nl" +
+                                   "🔁 **الحل التلقائي:** سيتم إنشاء Auth URL ↓$nl" +
+                                   "🔗 إنشاء مفتاح صحيح: https://login.tailscale.com/admin/settings/keys")
+                  Start-Process -FilePath $tsExe -ArgumentList @("up","--hostname=$hostname","--accept-routes") -NoNewWindow -PassThru | Out-Null
+              }
+
+              # ════════════════════════════════════════════════════════
+              # PHASE 3 — إذا لم يتصل بعد → انتظر AuthURL ثم أرسله
+              # ════════════════════════════════════════════════════════
               if ($tailscaleIp -eq "N/A") {
-                  if ($authUrl) {
-                      # AuthURL already captured in phase 1 — nothing more to do here,
-                      # the connection message will send it and then keep polling below
-                      Write-Host "🔗 AuthURL obtained, waiting for user to authenticate..."
-                  } else {
-                      # No authkey at all — launch without key to get AuthURL
-                      Write-Host "🌐 No authkey — starting Tailscale for AuthURL..."
-                      Start-Process -FilePath $tsExe -ArgumentList @("up","--hostname=$hostname","--accept-routes") -NoNewWindow -PassThru | Out-Null
+                  # إذا لم يُحصل على AuthURL بعد → poll حتى يظهر
+                  if ([string]::IsNullOrEmpty($authUrl)) {
+                      $waitResult = Wait-TailscaleReady -Label "waiting-for-AuthURL"
                   }
 
-                  # Send AuthURL notification immediately before blocking poll
-                  $publicIpEarly = try { (Invoke-RestMethod -Uri "https://api.ipify.org" -TimeoutSec 5) } catch { "N/A" }
-                  $nowEarly = Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC"
-                  @{
-                      tailscaleIp    = "N/A"
-                      publicIp       = $publicIpEarly
-                      rdpUser        = $rdpUser
-                      rdpPassword    = $password
-                      hostname       = $hostname
-                      tailscaleStatus= "NeedsLogin"
-                      authUrl        = $authUrl
-                      startTime      = $nowEarly
-                  } | ConvertTo-Json | Set-Content "C:\Users\Public\session_info.json" -Encoding UTF8
+                  # أرسل AuthURL فوراً بمجرد الحصول عليه
+                  if (-not [string]::IsNullOrEmpty($authUrl)) {
+                      $publicIpEarly = try { (Invoke-RestMethod -Uri "https://api.ipify.org" -TimeoutSec 5) } catch { "N/A" }
+                      Send-DiscordMsg ("🔐 **يلزم تسجيل الدخول لـ Tailscale** (run #$runNum)$nl" +
+                                       "━━━━━━━━━━━━━━━━━━━━━$nl" +
+                                       "🔗 **Auth URL:**$nl$authUrl$nl" +
+                                       "━━━━━━━━━━━━━━━━━━━━━$nl" +
+                                       "🖥️ **Hostname:** ``$hostname``$nl" +
+                                       "🌐 **Public IP:** ``$publicIpEarly``$nl" +
+                                       "👤 **RDP User:** ``$rdpUser``$nl" +
+                                       "🔑 **Password:** ``$password``$nl" +
+                                       "━━━━━━━━━━━━━━━━━━━━━$nl" +
+                                       "👆 افتح الرابط في المتصفح — سيتصل تلقائياً بعد المصادقة ✅")
+                      Write-Host "✅ AuthURL sent — waiting for user to authenticate..."
 
-                  $webhookUrl = "$env:DISCORD_WEBHOOK_URL"
-                  if ($webhookUrl -and $authUrl) {
-                      $nl  = "`n"
-                      $msg = "⚠️ **Tailscale Requires Authentication** (run #$runNum)$nl" +
-                             "━━━━━━━━━━━━━━━━━━━━━$nl" +
-                             "🔗 **Auth URL:** $authUrl$nl" +
-                             "🖥️ **Hostname:** ``$hostname``$nl" +
-                             "👤 **RDP User:** ``$rdpUser``$nl" +
-                             "🔑 **Password:** ``$password``$nl" +
-                             "━━━━━━━━━━━━━━━━━━━━━$nl" +
-                             "👉 Open the Auth URL to authenticate — will auto-detect once connected"
-                      $body      = @{ content = $msg } | ConvertTo-Json -Compress
-                      $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($body)
-                      try {
-                          Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType "application/json; charset=utf-8" -Body $bodyBytes | Out-Null
-                          Write-Host "✅ AuthURL sent to Discord"
-                      } catch { Write-Host "⚠️ Discord notify failed: $($_.Exception.Message)" }
+                      @{
+                          tailscaleIp    = "N/A"
+                          publicIp       = $publicIpEarly
+                          rdpUser        = $rdpUser
+                          rdpPassword    = $password
+                          hostname       = $hostname
+                          tailscaleStatus= "NeedsLogin"
+                          authUrl        = $authUrl
+                          startTime      = (Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC")
+                      } | ConvertTo-Json | Set-Content "C:\Users\Public\session_info.json" -Encoding UTF8
                   }
 
-                  # Now keep polling every 500ms until user authenticates (no timeout)
-                  $result = Wait-TailscaleReady -Label "AuthURL-wait"
+                  # الآن poll بلا توقف حتى يتصل بعد مصادقة المستخدم
+                  $connectResult = Wait-TailscaleReady -Label "post-auth-connect"
+
+                  # بعد الاتصال أرسل رسالة نجاح
+                  if ($connectResult -eq "Running" -and $tailscaleIp -ne "N/A") {
+                      Send-DiscordMsg ("✅ **Tailscale متصل الآن!** (run #$runNum)$nl" +
+                                       "━━━━━━━━━━━━━━━━━━━━━$nl" +
+                                       "🔗 **Tailscale IP:** ``$tailscaleIp``$nl" +
+                                       "🖥️ **Hostname:** ``$hostname``$nl" +
+                                       "👤 **RDP User:** ``$rdpUser``$nl" +
+                                       "🔑 **Password:** ``$password``$nl" +
+                                       "🔌 **RDP Port:** 3389$nl" +
+                                       "━━━━━━━━━━━━━━━━━━━━━$nl" +
+                                       "🖥️ Connect: ``mstsc /v:$tailscaleIp``$nl" +
+                                       "👤 Username: ``.\$rdpUser``")
+                  }
               }
 
-              # ── PHASE 3: ipconfig fallback (rare edge case) ─────────────────
+              # ════════════════════════════════════════════════════════
+              # PHASE 4 — ipconfig fallback (حالة نادرة جداً)
+              # ════════════════════════════════════════════════════════
               if ($tailscaleIp -eq "N/A") {
                   $tsIpLine = ipconfig | Select-String "100\.\d+\.\d+\.\d+" | Select-Object -First 1
                   if ($tsIpLine) {
-                      $tailscaleIp   = ($tsIpLine.Line -replace '.*?(\d+\.\d+\.\d+\.\d+).*','$1').Trim()
+                      $tailscaleIp     = ($tsIpLine.Line -replace '.*?(\d+\.\d+\.\d+\.\d+).*','$1').Trim()
                       $tailscaleStatus = "Connected (fallback)"
                       Write-Host "✅ Tailscale IP via ipconfig fallback: $tailscaleIp"
                   }
