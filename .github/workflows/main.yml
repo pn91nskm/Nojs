@@ -1116,25 +1116,56 @@ jobs:
 
           Write-Host "✅ Session info written (with password)"
 
-          Write-Host "Starting Discord bot..."
-          $botProc = Start-Process -FilePath "node" -ArgumentList "$botDir\index.js" -WorkingDirectory $botDir -WindowStyle Hidden -PassThru -RedirectStandardOutput "$logDir\bot.out.log" -RedirectStandardError "$logDir\bot.err.log"
-          Start-Sleep -Seconds 15
+          # ════════════════════════════════════════════════════════
+          # تشغيل البوت مع restart تلقائي فوري — يعمل حتى يُحذف الـ lock
+          # ════════════════════════════════════════════════════════
+          Write-Host "🤖 Starting Discord/Telegram bot..."
+          $restartCount  = 0
+          $lockFile      = "C:\session_active.lock"
+          $heartbeatFile = "C:\Users\Public\heartbeat.txt"
 
-          if ($botProc.HasExited) {
-              Write-Host "WARNING: Bot exited early"
-              if (Test-Path "$logDir\bot.err.log") { Get-Content "$logDir\bot.err.log" -Tail 15 }
-              while (Test-Path "C:\session_active.lock") { Start-Sleep -Seconds 30 }
-          } else {
-              while (Test-Path "C:\session_active.lock") {
-                  Start-Sleep -Seconds 5
-                  if ($botProc.HasExited) {
-                      $botProc = Start-Process -FilePath "node" -ArgumentList "$botDir\index.js" -WorkingDirectory $botDir -WindowStyle Hidden -PassThru -RedirectStandardOutput "$logDir\bot.out.log" -RedirectStandardError "$logDir\bot.err.log"
+          function Start-Bot {
+              return Start-Process -FilePath "node" `
+                  -ArgumentList "$botDir\index.js" `
+                  -WorkingDirectory $botDir `
+                  -WindowStyle Hidden -PassThru `
+                  -RedirectStandardOutput "$logDir\bot.out.log" `
+                  -RedirectStandardError  "$logDir\bot.err.log"
+          }
+
+          $botProc = Start-Bot
+          Write-Host "🟢 Bot PID: $($botProc.Id)"
+
+          while (Test-Path $lockFile) {
+              Start-Sleep -Seconds 5
+
+              # heartbeat — يُبيّن أن الـ job لا يزال حياً في الـ logs
+              [System.IO.File]::WriteAllText($heartbeatFile,
+                  "alive: $(Get-Date -Format 'HH:mm:ss') | restarts: $restartCount | bot: $(if (-not $botProc.HasExited) { 'running' } else { 'restarting' })",
+                  [System.Text.Encoding]::UTF8)
+
+              # restart فوري إذا خرج البوت
+              if ($botProc.HasExited) {
+                  $restartCount++
+                  $exitCode = $botProc.ExitCode
+                  Write-Host "⚠️ Bot exited (code=$exitCode, restart #$restartCount) — restarting..."
+                  # اقرأ آخر سطور الخطأ للتشخيص
+                  if (Test-Path "$logDir\bot.err.log") {
+                      $tail = Get-Content "$logDir\bot.err.log" -Tail 5 -ErrorAction SilentlyContinue
+                      if ($tail) { $tail | ForEach-Object { Write-Host "  ERR: $_" } }
                   }
+                  Start-Sleep -Seconds 2
+                  $botProc = Start-Bot
+                  Write-Host "🟢 Bot restarted — PID: $($botProc.Id)"
               }
           }
 
-          if (-not $botProc.HasExited) { try { taskkill /PID $($botProc.Id) /T /F 2>$null } catch {} }
-          if (Test-Path "C:\session_active.lock") { Remove-Item "C:\session_active.lock" -Force }
+          Write-Host "🔒 Lock removed — stopping bot and cleaning up..."
+          if (-not $botProc.HasExited) {
+              try { taskkill /PID $($botProc.Id) /T /F 2>$null } catch {}
+          }
+          if (Test-Path $lockFile) { Remove-Item $lockFile -Force }
+          Write-Host "✅ Session ended cleanly after $restartCount bot restart(s)"
 
       - name: Final Forced Backup
         if: always()
