@@ -894,67 +894,100 @@ jobs:
 
           if (Test-Path $tsExe) {
               Write-Host "Starting Tailscale..."
-              
+
+              # ── helper: poll status every 500ms until Running or NeedsLogin ──
+              function Wait-TailscaleReady {
+                  param([string]$Label = "")
+                  Write-Host "⏳ Polling Tailscale ($Label)..."
+                  while ($true) {
+                      Start-Sleep -Milliseconds 500
+                      try {
+                          $j = & $tsExe status --json 2>&1 | Out-String
+                          $d = $j | ConvertFrom-Json -ErrorAction Stop
+                          $script:tailscaleStatus = $d.BackendState
+                          if ($d.BackendState -eq "Running") {
+                              if ($d.Self -and $d.Self.TailscaleIPs -and $d.Self.TailscaleIPs.Count -gt 0) {
+                                  $script:tailscaleIp = $d.Self.TailscaleIPs[0]
+                              }
+                              Write-Host "✅ Tailscale Running: IP=$($script:tailscaleIp)"
+                              return "Running"
+                          }
+                          elseif ($d.BackendState -eq "NeedsLogin") {
+                              if ($d.AuthURL) { $script:authUrl = $d.AuthURL }
+                              Write-Host "⚠️ NeedsLogin — AuthURL: $($script:authUrl)"
+                              return "NeedsLogin"
+                          }
+                          # any other state (Starting, NoState…) → keep polling
+                      } catch { }
+                  }
+              }
+
               $authKey = "$env:TAILSCALE_AUTHKEY"
               $authKeyValid = (-not [string]::IsNullOrEmpty($authKey) -and $authKey.StartsWith("tskey-auth-"))
 
+              # ── PHASE 1: try authkey first ──────────────────────────────────
               if ($authKeyValid) {
-                  & $tsExe up --authkey $authKey --hostname=$hostname --accept-routes --ephemeral --reset 2>&1 | Out-Null
-                  Start-Sleep -Seconds 10
-
-                  $maxWait = 30
-                  $waited = 0
-                  while ($waited -lt $maxWait) {
-                      try {
-                          $statusJson = & $tsExe status --json 2>&1 | Out-String
-                          $tsData = $statusJson | ConvertFrom-Json -ErrorAction Stop
-                          $tailscaleStatus = $tsData.BackendState
-                          
-                          if ($tsData.BackendState -eq "Running") {
-                              if ($tsData.Self -and $tsData.Self.TailscaleIPs -and $tsData.Self.TailscaleIPs.Count -gt 0) {
-                                  $tailscaleIp = $tsData.Self.TailscaleIPs[0]
-                              }
-                              Write-Host "✅ Tailscale connected: IP=$tailscaleIp"
-                              break
-                          }
-                          elseif ($tsData.BackendState -eq "NeedsLogin") {
-                              if ($tsData.AuthURL) { $authUrl = $tsData.AuthURL }
-                              break
-                          }
-                      } catch { }
-                      Start-Sleep -Seconds 2
-                      $waited += 2
-                  }
+                  Write-Host "🔑 Trying authkey..."
+                  & $tsExe up --authkey $authKey --hostname=$hostname --accept-routes --reset 2>&1 | Out-Null
+                  $result = Wait-TailscaleReady -Label "authkey"
               }
 
-              if ($tailscaleIp -eq "N/A" -and -not $authUrl) {
-                  Start-Process -FilePath $tsExe -ArgumentList @("up","--hostname=$hostname") -NoNewWindow -PassThru | Out-Null
-                  Start-Sleep -Seconds 5
-                  
-                  for ($i = 0; $i -lt 30; $i++) {
-                      Start-Sleep -Seconds 2
-                      try {
-                          $statusJson = & $tsExe status --json 2>&1 | Out-String
-                          $tsData = $statusJson | ConvertFrom-Json -ErrorAction Stop
-                          if ($tsData.AuthURL) { 
-                              $authUrl = $tsData.AuthURL
-                              break
-                          }
-                          if ($tsData.BackendState -eq "Running") {
-                              if ($tsData.Self -and $tsData.Self.TailscaleIPs -and $tsData.Self.TailscaleIPs.Count -gt 0) {
-                                  $tailscaleIp = $tsData.Self.TailscaleIPs[0]
-                              }
-                              break
-                          }
-                      } catch { }
+              # ── PHASE 2: if authkey failed/not provided → fallback to AuthURL ─
+              if ($tailscaleIp -eq "N/A") {
+                  if ($authUrl) {
+                      # AuthURL already captured in phase 1 — nothing more to do here,
+                      # the connection message will send it and then keep polling below
+                      Write-Host "🔗 AuthURL obtained, waiting for user to authenticate..."
+                  } else {
+                      # No authkey at all — launch without key to get AuthURL
+                      Write-Host "🌐 No authkey — starting Tailscale for AuthURL..."
+                      Start-Process -FilePath $tsExe -ArgumentList @("up","--hostname=$hostname","--accept-routes") -NoNewWindow -PassThru | Out-Null
                   }
+
+                  # Send AuthURL notification immediately before blocking poll
+                  $publicIpEarly = try { (Invoke-RestMethod -Uri "https://api.ipify.org" -TimeoutSec 5) } catch { "N/A" }
+                  $nowEarly = Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC"
+                  @{
+                      tailscaleIp    = "N/A"
+                      publicIp       = $publicIpEarly
+                      rdpUser        = $rdpUser
+                      rdpPassword    = $password
+                      hostname       = $hostname
+                      tailscaleStatus= "NeedsLogin"
+                      authUrl        = $authUrl
+                      startTime      = $nowEarly
+                  } | ConvertTo-Json | Set-Content "C:\Users\Public\session_info.json" -Encoding UTF8
+
+                  $webhookUrl = "$env:DISCORD_WEBHOOK_URL"
+                  if ($webhookUrl -and $authUrl) {
+                      $nl  = "`n"
+                      $msg = "⚠️ **Tailscale Requires Authentication** (run #$runNum)$nl" +
+                             "━━━━━━━━━━━━━━━━━━━━━$nl" +
+                             "🔗 **Auth URL:** $authUrl$nl" +
+                             "🖥️ **Hostname:** ``$hostname``$nl" +
+                             "👤 **RDP User:** ``$rdpUser``$nl" +
+                             "🔑 **Password:** ``$password``$nl" +
+                             "━━━━━━━━━━━━━━━━━━━━━$nl" +
+                             "👉 Open the Auth URL to authenticate — will auto-detect once connected"
+                      $body      = @{ content = $msg } | ConvertTo-Json -Compress
+                      $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+                      try {
+                          Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType "application/json; charset=utf-8" -Body $bodyBytes | Out-Null
+                          Write-Host "✅ AuthURL sent to Discord"
+                      } catch { Write-Host "⚠️ Discord notify failed: $($_.Exception.Message)" }
+                  }
+
+                  # Now keep polling every 500ms until user authenticates (no timeout)
+                  $result = Wait-TailscaleReady -Label "AuthURL-wait"
               }
 
+              # ── PHASE 3: ipconfig fallback (rare edge case) ─────────────────
               if ($tailscaleIp -eq "N/A") {
                   $tsIpLine = ipconfig | Select-String "100\.\d+\.\d+\.\d+" | Select-Object -First 1
-                  if ($tsIpLine) { 
-                      $tailscaleIp = ($tsIpLine.Line -replace '.*?(\d+\.\d+\.\d+\.\d+).*','$1').Trim()
+                  if ($tsIpLine) {
+                      $tailscaleIp   = ($tsIpLine.Line -replace '.*?(\d+\.\d+\.\d+\.\d+).*','$1').Trim()
                       $tailscaleStatus = "Connected (fallback)"
+                      Write-Host "✅ Tailscale IP via ipconfig fallback: $tailscaleIp"
                   }
               }
 
