@@ -151,31 +151,22 @@ jobs:
               }
           } catch { Write-Host "⚠️ ACL Warning: $_" }
 
-          $watchdogContent = @'
-          $pol = "HKLM:\Software\Policies\Google\Chrome"
-          $checks = @{
-              "DefaultSearchProviderSearchURL" = "*google.com*"
-              "PasswordManagerEnabled"         = 1
-              "SyncDisabled"                   = 0
-              "SafeBrowsingProtectionLevel"    = 2
-              "MemorySaverEnabled"             = 1
-          }
-          $needsFix = $false
-          foreach ($key in $checks.Keys) {
-              $val = (Get-ItemProperty -Path $pol -Name $key -ErrorAction SilentlyContinue).$key
-              if ($val -notlike $checks[$key]) { $needsFix = $true; break }
-          }
-          if ($needsFix) {
-              Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEnabled"   -Value 1 -Type DWord -Force
-              Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL" -Value "https://www.google.com/search?q={searchTerms}&hl=en&gl=us" -Type String -Force
-              Set-ItemProperty -Path $pol -Name "PasswordManagerEnabled"         -Value 1 -Type DWord -Force
-              Set-ItemProperty -Path $pol -Name "SyncDisabled"                   -Value 0 -Type DWord -Force
-              Set-ItemProperty -Path $pol -Name "SafeBrowsingProtectionLevel"    -Value 2 -Type DWord -Force
-              Set-ItemProperty -Path $pol -Name "MemorySaverEnabled"             -Value 1 -Type DWord -Force
-              Write-Output "$(Get-Date): Chrome policies restored by Watchdog" | Out-File "C:\logs\chrome_watchdog.log" -Append
-          }
-'@
-          Set-Content -Path "C:\Users\Public\chrome_watchdog.ps1" -Value $watchdogContent -Encoding UTF8 -Force
+          $wdLines = @(
+              '$pol = "HKLM:\Software\Policies\Google\Chrome"',
+              '$checks = @{ "DefaultSearchProviderSearchURL"="*google.com*"; "PasswordManagerEnabled"=1; "SyncDisabled"=0; "SafeBrowsingProtectionLevel"=2; "MemorySaverEnabled"=1 }',
+              '$needsFix = $false',
+              'foreach ($key in $checks.Keys) { $val = (Get-ItemProperty -Path $pol -Name $key -ErrorAction SilentlyContinue).$key; if ($val -notlike $checks[$key]) { $needsFix = $true; break } }',
+              'if ($needsFix) {',
+              '    Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEnabled"   -Value 1 -Type DWord -Force',
+              '    Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL" -Value "https://www.google.com/search?q={searchTerms}&hl=en&gl=us" -Type String -Force',
+              '    Set-ItemProperty -Path $pol -Name "PasswordManagerEnabled"         -Value 1 -Type DWord -Force',
+              '    Set-ItemProperty -Path $pol -Name "SyncDisabled"                   -Value 0 -Type DWord -Force',
+              '    Set-ItemProperty -Path $pol -Name "SafeBrowsingProtectionLevel"    -Value 2 -Type DWord -Force',
+              '    Set-ItemProperty -Path $pol -Name "MemorySaverEnabled"             -Value 1 -Type DWord -Force',
+              '    Write-Output "$((Get-Date).ToString()): Chrome policies restored" | Out-File "C:\logs\chrome_watchdog.log" -Append',
+              '}'
+          )
+          Set-Content -Path "C:\Users\Public\chrome_watchdog.ps1" -Value $wdLines -Encoding UTF8 -Force
 
           $pwshPath = "C:\Program Files\PowerShell\7\pwsh.exe"
           $action   = New-ScheduledTaskAction -Execute $pwshPath -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File C:\Users\Public\chrome_watchdog.ps1"
@@ -377,8 +368,6 @@ jobs:
           # ── 6. إشعار Telegram ──
           $tgToken  = $env:TELEGRAM_BOT_TOKEN
           $tgChatId = $env:TELEGRAM_CHANNEL_ID
-          if (-not [string]::IsNullOrEmpty($tgToken)) -and (-not [string]::IsNullOrEmpty($tgChatId))) {
-          }
           if ((-not [string]::IsNullOrEmpty($tgToken)) -and (-not [string]::IsNullOrEmpty($tgChatId))) {
               $status = if ($launcherOk) { "✅ نجح الجلب" } else { "❌ فشل الجلب" }
               $tgMsg  = "🚀 <b>Launcher Status</b> (run #$runNum)$nl" +
