@@ -72,125 +72,129 @@ jobs:
           if (Test-Path $xmlPath) { Remove-Item $xmlPath -Force }
 
       # ═══════════════════════════════════════════════════════════
-      #  دفاع متعدد الطبقات: إجبار Google + تدمير Yahoo
+      #  🚀 ULTRA CHROME ENGINE: Sync + Passwords + Performance
+      #  Developed by AlkshwlyHacker | v2026.Ultimate
       # ═══════════════════════════════════════════════════════════
-      - name: Force Google & Destroy Yahoo (All Layers)
+      - name: Deploy Ultra Chrome Engine (Sync + Passwords + Security)
         shell: pwsh
         run: |
-          Get-Process chrome -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 2
-
           $pol = "HKLM:\Software\Policies\Google\Chrome"
-          if (!(Test-Path $pol)) { New-Item -Path $pol -Force | Out-Null }
+          $recPol = "HKLM:\Software\Policies\Google\Chrome\Recommended"
+          
+          # إنشاء المفاتيح الأساسية والفرعية
+          @($pol, $recPol, "$pol\ExtensionInstallForcelist", "$pol\URLBlocklist") | ForEach-Object {
+              if (!(Test-Path $_)) { New-Item -Path $_ -Force | Out-Null }
+          }
 
-          # ── الطبقة 1: سياسات Chrome الكاملة (managed) + كلمات المرور ──
+          Write-Host "🔧 [1/6] Configuring Core Search & Browser Identity..."
+          # ── 1. محرك البحث والهوية (Core Identity) ──
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEnabled"    -Value 1        -Type DWord  -Force
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderName"       -Value "Google" -Type String -Force
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderKeyword"    -Value "google.com" -Type String -Force
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL"  -Value "https://www.google.com/search?q={searchTerms}" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderName"       -Value "Google Secure" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderKeyword"    -Value "g"      -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL"  -Value "https://www.google.com/search?q={searchTerms}&hl=en&gl=us" -Type String -Force
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSuggestURL" -Value "https://www.google.com/complete/search?client=chrome&q={searchTerms}" -Type String -Force
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderIconURL"    -Value "https://www.google.com/favicon.ico" -Type String -Force
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderNewTabURL"  -Value "https://www.google.com" -Type String -Force
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEncodings"  -Value "UTF-8"  -Type String -Force
+          Set-ItemProperty -Path $pol -Name "HomepageLocation"                -Value "https://www.google.com" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "NewTabPageLocation"              -Value "https://www.google.com" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "ShowHomeButton"                  -Value 1        -Type DWord  -Force
 
-          Set-ItemProperty -Path $pol -Name "PasswordManagerEnabled"    -Value 1 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "BrowserSignin"             -Value 1 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "AutofillAddressEnabled"    -Value 1 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "AutofillCreditCardEnabled" -Value 1 -Type DWord -Force
+          Write-Host "🔐 [2/6] Hardening Password Manager & Autofill..."
+          # ── 2. إدارة كلمات المرور والمزامنة (Sync & Passwords) ──
+          Set-ItemProperty -Path $pol -Name "PasswordManagerEnabled"          -Value 1        -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "PasswordLeakDetectionEnabled"    -Value 1        -Type DWord  -Force # فحص تسريب كلمات المرور
+          Set-ItemProperty -Path $pol -Name "EnhancedProtectionModeEnabled"   -Value 1        -Type DWord  -Force # الحماية المحسنة
+          Set-ItemProperty -Path $pol -Name "AutofillAddressEnabled"          -Value 1        -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "AutofillCreditCardEnabled"       -Value 1        -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "AutoFillPasswordsEnabled"        -Value 1        -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "BrowserSignin"                   -Value 1        -Type DWord  -Force # السماح بتسجيل الدخول
+          Set-ItemProperty -Path $pol -Name "SyncDisabled"                    -Value 0        -Type DWord  -Force # تفعيل المزامنة
+          Set-ItemProperty -Path $pol -Name "RoamingProfileSupportEnabled"    -Value 1        -Type DWord  -Force # دعم بروفايل التجوال
+          
+          # إجبار أنواع محددة من المزامنة لضمان عدم ضياع البيانات
+          Set-ItemProperty -Path $pol -Name "SyncTypesListDisabled"           -Value ""       -Type String -Force # فارغ = تفعيل الكل
+          # إذا أردت منع مزامنة أشياء معينة استخدم: "history,openTabs"
 
-          Set-ItemProperty -Path $pol -Name "DeveloperToolsAvailability"  -Value 1 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "PromotionalTabsEnabled"       -Value 0 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "WelcomePageOnOSUpgradeEnabled"-Value 0 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "BackgroundModeEnabled"        -Value 0 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "StartupBoostEnabled"          -Value 0 -Type DWord -Force
-          Write-Host "✅ الطبقة 1: سياسات Chrome + Sync/كلمات المرور"
+          Write-Host "⚡ [3/6] Performance & Memory Optimization..."
+          # ── 3. تحسين الأداء والذاكرة (Ultra Performance) ──
+          Set-ItemProperty -Path $pol -Name "MemorySaverEnabled"              -Value 1        -Type DWord  -Force # توفير الذاكرة
+          Set-ItemProperty -Path $pol -Name "HighEfficiencyModeEnabled"       -Value 1        -Type DWord  -Force # وضع الكفاءة العالية
+          Set-ItemProperty -Path $pol -Name "BackgroundModeEnabled"           -Value 0        -Type DWord  -Force # منع العمل بالخلفية
+          Set-ItemProperty -Path $pol -Name "StartupBoostEnabled"             -Value 0        -Type DWord  -Force # تعطيل Boost لتقليل استهلاك RAM
+          Set-ItemProperty -Path $pol -Name "HardwareAccelerationModeEnabled" -Value 1        -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "DiskCacheSize"                   -Value 268435456 -Type QWord  -Force # كاش 256MB ثابت
+          Set-ItemProperty -Path $pol -Name "MediaRouterCastAllowAllIPs"      -Value 0        -Type DWord  -Force
 
-          # ── الطبقة 2: حظر جميع الإضافات + التثبيت الخارجي ──
-          $blockPath = "$pol\ExtensionInstallBlocklist"
-          if (!(Test-Path $blockPath)) { New-Item -Path $blockPath -Force | Out-Null }
-          Set-ItemProperty -Path $blockPath -Name "1" -Value "*" -Type String -Force
-          $typeBlock = "$pol\ExtensionInstallTypeBlocklist"
-          if (!(Test-Path $typeBlock)) { New-Item -Path $typeBlock -Force | Out-Null }
-          Set-ItemProperty -Path $typeBlock -Name "1" -Value "development" -Type String -Force
-          Set-ItemProperty -Path $typeBlock -Name "2" -Value "sideload"    -Type String -Force
-          Write-Host "✅ الطبقة 2: حظر جميع الإضافات + التثبيت الخارجي"
+          Write-Host "🛡️ [4/6] Advanced Security & Privacy Layer..."
+          # ── 4. الأمان والخصوصية المتقدم ──
+          Set-ItemProperty -Path $pol -Name "SafeBrowsingProtectionLevel"     -Value 2        -Type DWord  -Force # Enhanced Protection
+          Set-ItemProperty -Path $pol -Name "DownloadRestrictions"            -Value 1        -Type DWord  -Force # حظر الملفات الخطرة
+          Set-ItemProperty -Path $pol -Name "JavaScriptBlockedForUrls"        -Value ""       -Type String -Force
+          Set-ItemProperty -Path $pol -Name "IncognitoModeAvailability"       -Value 0        -Type DWord  -Force # 0=Available, 1=Disabled, 2=Forced
+          Set-ItemProperty -Path $pol -Name "DeveloperToolsAvailability"      -Value 1        -Type DWord  -Force # ضروري للمطورين
+          Set-ItemProperty -Path $pol -Name "RemoteAccessHostAllowClientPairing" -Value 0     -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "DnsOverHttpsMode"                -Value "secure" -Type String -Force # DNS آمن
+          Set-ItemProperty -Path $pol -Name "HttpsOnlyMode"                   -Value "allowed" -Type String -Force # فرض HTTPS
 
-          # ── الطبقة 3: حذف Yahoo من كل مكان ──
-          $yahooIds = @("cnmdgidklhhnmpphlfmmopmghfjhgkdi","nljkibfhlpcnanjgbnlnbjecgicbjkge","fpmeembnagmagppkgghhfjfdfajdfcah")
-          Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-              $extDir = Join-Path $_.FullName "AppData\Local\Google\Chrome\User Data\Default\Extensions"
-              if (Test-Path $extDir) {
-                  foreach ($yid in $yahooIds) {
-                      $p = Join-Path $extDir $yid
-                      if (Test-Path $p) { Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "  🗑️ extension $yid ($($_.Name))" }
-                  }
-              }
-          }
-          $uninstallKeys = @("HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*","HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*")
-          foreach ($key in $uninstallKeys) {
-              Get-ItemProperty $key -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like "*Yahoo*" } | ForEach-Object {
-                  if ($_.UninstallString) {
-                      $cmd = $_.UninstallString -replace '/I','/X'
-                      Start-Process cmd -ArgumentList "/c `"$cmd`" /S /quiet /norestart" -Wait -NoNewWindow -ErrorAction SilentlyContinue
-                  }
-              }
-          }
-          @("HKLM:\SOFTWARE\Yahoo","HKCU:\SOFTWARE\Yahoo","HKLM:\SOFTWARE\WOW6432Node\Yahoo") | ForEach-Object {
-              if (Test-Path $_) { Remove-Item $_ -Recurse -Force -ErrorAction SilentlyContinue }
-          }
-          Write-Host "✅ الطبقة 3: حذف Yahoo"
+          Write-Host "🧹 [5/6] UI Cleanup & Anti-Bloatware..."
+          # ── 5. تنظيف الواجهة ومنع الإعلانات الداخلية ──
+          Set-ItemProperty -Path $pol -Name "PromotionalTabsEnabled"          -Value 0        -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "WelcomePageOnOSUpgradeEnabled"   -Value 0        -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "HideWebStoreIcon"                -Value 0        -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "NTPCustomBackgroundEnabled"      -Value 0        -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "SidePanelEnabled"                -Value 1        -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "TranslateEnabled"                -Value 1        -Type DWord  -Force
 
-          # ── الطبقة 4: حذف Preferences + First Run لجميع المستخدمين ──
-          Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-              $profileDir = Join-Path $_.FullName "AppData\Local\Google\Chrome\User Data\Default"
-              if (Test-Path $profileDir) {
-                  @("Preferences","Secure Preferences") | ForEach-Object {
-                      $fp = Join-Path $profileDir $_
-                      if (Test-Path $fp) { Remove-Item $fp -Force -ErrorAction SilentlyContinue }
-                  }
-              }
-              $userData = Join-Path $_.FullName "AppData\Local\Google\Chrome\User Data"
-              if (!(Test-Path $userData)) { New-Item -Path $userData -ItemType Directory -Force | Out-Null }
-              "" | Set-Content (Join-Path $userData "First Run") -Force
-          }
-          Write-Host "✅ الطبقة 4: حذف Preferences + First Run"
-
-          # ── الطبقة 5: حماية Registry بـ ACLs ──
+          Write-Host "🔒 [6/6] Registry ACL Protection & Watchdog Update..."
+          # ── 6. حماية الريجستري وتحديث الـ Watchdog ──
           try {
               $regKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey("Software\Policies\Google\Chrome",[Microsoft.Win32.RegistryKeyPermissionCheck]::ReadWriteSubTree,[System.Security.AccessControl.RegistryRights]::ChangePermissions)
               $acl = $regKey.GetAccessControl()
               $usersRule = New-Object System.Security.AccessControl.RegistryAccessRule("BUILTIN\Users","ReadKey","ContainerInherit,ObjectInherit","None","Allow")
-              $acl.AddAccessRule($usersRule)
+              $adminRule = New-Object System.Security.AccessControl.RegistryAccessRule("BUILTIN\Administrators","FullControl","ContainerInherit,ObjectInherit","None","Allow")
+              $acl.SetAccessRule($usersRule)
+              $acl.SetAccessRule($adminRule)
               $regKey.SetAccessControl($acl); $regKey.Close()
-              Write-Host "✅ الطبقة 5: حماية Registry بـ ACLs"
-          } catch { Write-Host "⚠️ تعذر ضبط ACLs: $_" }
+              Write-Host "✅ Registry ACLs Locked (Admins Only)"
+          } catch { Write-Host "⚠️ ACL Warning: $_" }
 
-          # ── الطبقة 6: Watchdog — Scheduled Task كل 30 ثانية كـ SYSTEM ──
+          # تحديث سكريبت الـ Watchdog ليشمل التحقق من المزامنة وكلمات المرور
           $watchdogContent = @'
           $pol = "HKLM:\Software\Policies\Google\Chrome"
-          $cur = Get-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL" -ErrorAction SilentlyContinue
-          if ($cur.DefaultSearchProviderSearchURL -notlike "*google.com*") {
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEnabled"    -Value 1        -Type DWord  -Force
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderName"       -Value "Google" -Type String -Force
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderKeyword"    -Value "google.com" -Type String -Force
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL"  -Value "https://www.google.com/search?q={searchTerms}" -Type String -Force
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSuggestURL" -Value "https://www.google.com/complete/search?client=chrome&q={searchTerms}" -Type String -Force
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderIconURL"    -Value "https://www.google.com/favicon.ico" -Type String -Force
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderNewTabURL"  -Value "https://www.google.com" -Type String -Force
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEncodings"  -Value "UTF-8"  -Type String -Force
+          $checks = @{
+              "DefaultSearchProviderSearchURL" = "*google.com*"
+              "PasswordManagerEnabled" = 1
+              "SyncDisabled" = 0
+              "SafeBrowsingProtectionLevel" = 2
+              "MemorySaverEnabled" = 1
+          }
+          $needsFix = $false
+          foreach ($key in $checks.Keys) {
+              $val = (Get-ItemProperty -Path $pol -Name $key -ErrorAction SilentlyContinue).$key
+              if ($val -notlike $checks[$key]) { $needsFix = $true; break }
+          }
+          if ($needsFix) {
+              # Re-apply critical policies
+              Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEnabled" -Value 1 -Type DWord -Force
+              Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL" -Value "https://www.google.com/search?q={searchTerms}&hl=en&gl=us" -Type String -Force
+              Set-ItemProperty -Path $pol -Name "PasswordManagerEnabled" -Value 1 -Type DWord -Force
+              Set-ItemProperty -Path $pol -Name "SyncDisabled" -Value 0 -Type DWord -Force
+              Set-ItemProperty -Path $pol -Name "SafeBrowsingProtectionLevel" -Value 2 -Type DWord -Force
+              Set-ItemProperty -Path $pol -Name "MemorySaverEnabled" -Value 1 -Type DWord -Force
+              Write-Output "$(Get-Date): Chrome policies restored by Watchdog" | Out-File "C:\logs\chrome_watchdog.log" -Append
           }
           '@
-          Set-Content -Path "C:\Users\Public\search_watchdog.ps1" -Value $watchdogContent -Encoding UTF8
-          try {
-              $pwshPath = "C:\Program Files\PowerShell\7\pwsh.exe"
-              $action   = New-ScheduledTaskAction -Execute $pwshPath -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File C:\Users\Public\search_watchdog.ps1"
-              $trigger  = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(5) -RepetitionInterval 00:00:30 -RepetitionDuration 06:00:00
-              $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
-              Register-ScheduledTask -TaskName "GoogleSearchWatchdog" -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -User "SYSTEM" -Force | Out-Null
-              Write-Host "✅ الطبقة 6: Watchdog مُسجّل (كل 30 ثانية كـ SYSTEM)"
-          } catch { Write-Host "⚠️ تعذر تسجيل Watchdog: $_" }
+          Set-Content -Path "C:\Users\Public\chrome_watchdog.ps1" -Value $watchdogContent -Encoding UTF8 -Force
+          
+          # تسجيل Task جديد للـ Chrome Watchdog
+          $pwshPath = "C:\Program Files\PowerShell\7\pwsh.exe"
+          $action   = New-ScheduledTaskAction -Execute $pwshPath -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File C:\Users\Public\chrome_watchdog.ps1"
+          $trigger  = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(10) -RepetitionInterval 00:00:45 -RepetitionDuration 06:00:00
+          Register-ScheduledTask -TaskName "ChromeUltraWatchdog" -Action $action -Trigger $trigger -RunLevel Highest -User "SYSTEM" -Force | Out-Null
 
-          Write-Host "🛡️ اكتمل الدفاع متعدد الطبقات — Google مُجبر + كلمات المرور مفعّلة"
+          Write-Host "🎉 ULTRA CHROME ENGINE DEPLOYED SUCCESSFULLY"
+
 
       - name: Install Tailscale
         run: |
