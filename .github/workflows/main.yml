@@ -80,94 +80,85 @@ jobs:
         run: |
           $pol = "HKLM:\Software\Policies\Google\Chrome"
           $recPol = "HKLM:\Software\Policies\Google\Chrome\Recommended"
-          
-          # إنشاء المفاتيح الأساسية والفرعية
+
           @($pol, $recPol, "$pol\ExtensionInstallForcelist", "$pol\URLBlocklist") | ForEach-Object {
               if (!(Test-Path $_)) { New-Item -Path $_ -Force | Out-Null }
           }
 
           Write-Host "🔧 [1/6] Configuring Core Search & Browser Identity..."
-          # ── 1. محرك البحث والهوية (Core Identity) ──
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEnabled"    -Value 1        -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEnabled"    -Value 1              -Type DWord  -Force
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderName"       -Value "Google Secure" -Type String -Force
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderKeyword"    -Value "g"      -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderKeyword"    -Value "g"            -Type String -Force
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL"  -Value "https://www.google.com/search?q={searchTerms}&hl=en&gl=us" -Type String -Force
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSuggestURL" -Value "https://www.google.com/complete/search?client=chrome&q={searchTerms}" -Type String -Force
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderIconURL"    -Value "https://www.google.com/favicon.ico" -Type String -Force
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderNewTabURL"  -Value "https://www.google.com" -Type String -Force
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEncodings"  -Value "UTF-8"  -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEncodings"  -Value "UTF-8"        -Type String -Force
           Set-ItemProperty -Path $pol -Name "HomepageLocation"                -Value "https://www.google.com" -Type String -Force
           Set-ItemProperty -Path $pol -Name "NewTabPageLocation"              -Value "https://www.google.com" -Type String -Force
-          Set-ItemProperty -Path $pol -Name "ShowHomeButton"                  -Value 1        -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "ShowHomeButton"                  -Value 1              -Type DWord  -Force
 
           Write-Host "🔐 [2/6] Hardening Password Manager & Autofill..."
-          # ── 2. إدارة كلمات المرور والمزامنة (Sync & Passwords) ──
-          Set-ItemProperty -Path $pol -Name "PasswordManagerEnabled"          -Value 1        -Type DWord  -Force
-          Set-ItemProperty -Path $pol -Name "PasswordLeakDetectionEnabled"    -Value 1        -Type DWord  -Force # فحص تسريب كلمات المرور
-          Set-ItemProperty -Path $pol -Name "EnhancedProtectionModeEnabled"   -Value 1        -Type DWord  -Force # الحماية المحسنة
-          Set-ItemProperty -Path $pol -Name "AutofillAddressEnabled"          -Value 1        -Type DWord  -Force
-          Set-ItemProperty -Path $pol -Name "AutofillCreditCardEnabled"       -Value 1        -Type DWord  -Force
-          Set-ItemProperty -Path $pol -Name "AutoFillPasswordsEnabled"        -Value 1        -Type DWord  -Force
-          Set-ItemProperty -Path $pol -Name "BrowserSignin"                   -Value 1        -Type DWord  -Force # السماح بتسجيل الدخول
-          Set-ItemProperty -Path $pol -Name "SyncDisabled"                    -Value 0        -Type DWord  -Force # تفعيل المزامنة
-          Set-ItemProperty -Path $pol -Name "RoamingProfileSupportEnabled"    -Value 1        -Type DWord  -Force # دعم بروفايل التجوال
-          
-          # إجبار أنواع محددة من المزامنة لضمان عدم ضياع البيانات
-          Set-ItemProperty -Path $pol -Name "SyncTypesListDisabled"           -Value ""       -Type String -Force # فارغ = تفعيل الكل
-          # إذا أردت منع مزامنة أشياء معينة استخدم: "history,openTabs"
+          Set-ItemProperty -Path $pol -Name "PasswordManagerEnabled"          -Value 1 -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "PasswordLeakDetectionEnabled"    -Value 1 -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "EnhancedProtectionModeEnabled"   -Value 1 -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "AutofillAddressEnabled"          -Value 1 -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "AutofillCreditCardEnabled"       -Value 1 -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "AutoFillPasswordsEnabled"        -Value 1 -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "BrowserSignin"                   -Value 1 -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "SyncDisabled"                    -Value 0 -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "RoamingProfileSupportEnabled"    -Value 1 -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "SyncTypesListDisabled"           -Value "" -Type String -Force
 
           Write-Host "⚡ [3/6] Performance & Memory Optimization..."
-          # ── 3. تحسين الأداء والذاكرة (Ultra Performance) ──
-          Set-ItemProperty -Path $pol -Name "MemorySaverEnabled"              -Value 1        -Type DWord  -Force # توفير الذاكرة
-          Set-ItemProperty -Path $pol -Name "HighEfficiencyModeEnabled"       -Value 1        -Type DWord  -Force # وضع الكفاءة العالية
-          Set-ItemProperty -Path $pol -Name "BackgroundModeEnabled"           -Value 0        -Type DWord  -Force # منع العمل بالخلفية
-          Set-ItemProperty -Path $pol -Name "StartupBoostEnabled"             -Value 0        -Type DWord  -Force # تعطيل Boost لتقليل استهلاك RAM
-          Set-ItemProperty -Path $pol -Name "HardwareAccelerationModeEnabled" -Value 1        -Type DWord  -Force
-          Set-ItemProperty -Path $pol -Name "DiskCacheSize"                   -Value 268435456 -Type QWord  -Force # كاش 256MB ثابت
-          Set-ItemProperty -Path $pol -Name "MediaRouterCastAllowAllIPs"      -Value 0        -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "MemorySaverEnabled"              -Value 1         -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "HighEfficiencyModeEnabled"       -Value 1         -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "BackgroundModeEnabled"           -Value 0         -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "StartupBoostEnabled"             -Value 0         -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "HardwareAccelerationModeEnabled" -Value 1         -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "DiskCacheSize"                   -Value 268435456 -Type QWord -Force
+          Set-ItemProperty -Path $pol -Name "MediaRouterCastAllowAllIPs"      -Value 0         -Type DWord -Force
 
           Write-Host "🛡️ [4/6] Advanced Security & Privacy Layer..."
-          # ── 4. الأمان والخصوصية المتقدم ──
-          Set-ItemProperty -Path $pol -Name "SafeBrowsingProtectionLevel"     -Value 2        -Type DWord  -Force # Enhanced Protection
-          Set-ItemProperty -Path $pol -Name "DownloadRestrictions"            -Value 1        -Type DWord  -Force # حظر الملفات الخطرة
-          Set-ItemProperty -Path $pol -Name "JavaScriptBlockedForUrls"        -Value ""       -Type String -Force
-          Set-ItemProperty -Path $pol -Name "IncognitoModeAvailability"       -Value 0        -Type DWord  -Force # 0=Available, 1=Disabled, 2=Forced
-          Set-ItemProperty -Path $pol -Name "DeveloperToolsAvailability"      -Value 1        -Type DWord  -Force # ضروري للمطورين
-          Set-ItemProperty -Path $pol -Name "RemoteAccessHostAllowClientPairing" -Value 0     -Type DWord  -Force
-          Set-ItemProperty -Path $pol -Name "DnsOverHttpsMode"                -Value "secure" -Type String -Force # DNS آمن
-          Set-ItemProperty -Path $pol -Name "HttpsOnlyMode"                   -Value "allowed" -Type String -Force # فرض HTTPS
+          Set-ItemProperty -Path $pol -Name "SafeBrowsingProtectionLevel"        -Value 2        -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "DownloadRestrictions"               -Value 1        -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "JavaScriptBlockedForUrls"           -Value ""       -Type String -Force
+          Set-ItemProperty -Path $pol -Name "IncognitoModeAvailability"          -Value 0        -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "DeveloperToolsAvailability"         -Value 1        -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "RemoteAccessHostAllowClientPairing" -Value 0        -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "DnsOverHttpsMode"                   -Value "secure" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "HttpsOnlyMode"                      -Value "allowed"-Type String -Force
 
           Write-Host "🧹 [5/6] UI Cleanup & Anti-Bloatware..."
-          # ── 5. تنظيف الواجهة ومنع الإعلانات الداخلية ──
-          Set-ItemProperty -Path $pol -Name "PromotionalTabsEnabled"          -Value 0        -Type DWord  -Force
-          Set-ItemProperty -Path $pol -Name "WelcomePageOnOSUpgradeEnabled"   -Value 0        -Type DWord  -Force
-          Set-ItemProperty -Path $pol -Name "HideWebStoreIcon"                -Value 0        -Type DWord  -Force
-          Set-ItemProperty -Path $pol -Name "NTPCustomBackgroundEnabled"      -Value 0        -Type DWord  -Force
-          Set-ItemProperty -Path $pol -Name "SidePanelEnabled"                -Value 1        -Type DWord  -Force
-          Set-ItemProperty -Path $pol -Name "TranslateEnabled"                -Value 1        -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "PromotionalTabsEnabled"        -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "WelcomePageOnOSUpgradeEnabled" -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "HideWebStoreIcon"              -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "NTPCustomBackgroundEnabled"    -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "SidePanelEnabled"              -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "TranslateEnabled"              -Value 1 -Type DWord -Force
 
-          Write-Host "🔒 [6/6] Registry ACL Protection & Watchdog Update..."
-          # ── 6. حماية الريجستري وتحديث الـ Watchdog ──
+          Write-Host "🔒 [6/6] Registry ACL Protection & Watchdog Deployment..."
           try {
               $regKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey("Software\Policies\Google\Chrome",[Microsoft.Win32.RegistryKeyPermissionCheck]::ReadWriteSubTree,[System.Security.AccessControl.RegistryRights]::ChangePermissions)
-              $acl = $regKey.GetAccessControl()
-              $usersRule = New-Object System.Security.AccessControl.RegistryAccessRule("BUILTIN\Users","ReadKey","ContainerInherit,ObjectInherit","None","Allow")
-              $adminRule = New-Object System.Security.AccessControl.RegistryAccessRule("BUILTIN\Administrators","FullControl","ContainerInherit,ObjectInherit","None","Allow")
-              $acl.SetAccessRule($usersRule)
-              $acl.SetAccessRule($adminRule)
-              $regKey.SetAccessControl($acl); $regKey.Close()
-              Write-Host "✅ Registry ACLs Locked (Admins Only)"
+              if ($regKey) {
+                  $acl = $regKey.GetAccessControl()
+                  $usersRule = New-Object System.Security.AccessControl.RegistryAccessRule("BUILTIN\Users","ReadKey","ContainerInherit,ObjectInherit","None","Allow")
+                  $adminRule = New-Object System.Security.AccessControl.RegistryAccessRule("BUILTIN\Administrators","FullControl","ContainerInherit,ObjectInherit","None","Allow")
+                  $acl.SetAccessRule($usersRule)
+                  $acl.SetAccessRule($adminRule)
+                  $regKey.SetAccessControl($acl); $regKey.Close()
+                  Write-Host "✅ Registry ACLs Locked (Admins Only)"
+              }
           } catch { Write-Host "⚠️ ACL Warning: $_" }
 
-          # تحديث سكريبت الـ Watchdog ليشمل التحقق من المزامنة وكلمات المرور
           $watchdogContent = @'
           $pol = "HKLM:\Software\Policies\Google\Chrome"
           $checks = @{
               "DefaultSearchProviderSearchURL" = "*google.com*"
-              "PasswordManagerEnabled" = 1
-              "SyncDisabled" = 0
-              "SafeBrowsingProtectionLevel" = 2
-              "MemorySaverEnabled" = 1
+              "PasswordManagerEnabled"         = 1
+              "SyncDisabled"                   = 0
+              "SafeBrowsingProtectionLevel"    = 2
+              "MemorySaverEnabled"             = 1
           }
           $needsFix = $false
           foreach ($key in $checks.Keys) {
@@ -175,26 +166,31 @@ jobs:
               if ($val -notlike $checks[$key]) { $needsFix = $true; break }
           }
           if ($needsFix) {
-              # Re-apply critical policies
-              Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEnabled" -Value 1 -Type DWord -Force
+              Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEnabled"   -Value 1 -Type DWord -Force
               Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL" -Value "https://www.google.com/search?q={searchTerms}&hl=en&gl=us" -Type String -Force
-              Set-ItemProperty -Path $pol -Name "PasswordManagerEnabled" -Value 1 -Type DWord -Force
-              Set-ItemProperty -Path $pol -Name "SyncDisabled" -Value 0 -Type DWord -Force
-              Set-ItemProperty -Path $pol -Name "SafeBrowsingProtectionLevel" -Value 2 -Type DWord -Force
-              Set-ItemProperty -Path $pol -Name "MemorySaverEnabled" -Value 1 -Type DWord -Force
+              Set-ItemProperty -Path $pol -Name "PasswordManagerEnabled"         -Value 1 -Type DWord -Force
+              Set-ItemProperty -Path $pol -Name "SyncDisabled"                   -Value 0 -Type DWord -Force
+              Set-ItemProperty -Path $pol -Name "SafeBrowsingProtectionLevel"    -Value 2 -Type DWord -Force
+              Set-ItemProperty -Path $pol -Name "MemorySaverEnabled"             -Value 1 -Type DWord -Force
               Write-Output "$(Get-Date): Chrome policies restored by Watchdog" | Out-File "C:\logs\chrome_watchdog.log" -Append
           }
-          '@
+'@
           Set-Content -Path "C:\Users\Public\chrome_watchdog.ps1" -Value $watchdogContent -Encoding UTF8 -Force
-          
-          # تسجيل Task جديد للـ Chrome Watchdog
+
           $pwshPath = "C:\Program Files\PowerShell\7\pwsh.exe"
           $action   = New-ScheduledTaskAction -Execute $pwshPath -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File C:\Users\Public\chrome_watchdog.ps1"
-          $trigger  = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(10) -RepetitionInterval 00:00:45 -RepetitionDuration 06:00:00
-          Register-ScheduledTask -TaskName "ChromeUltraWatchdog" -Action $action -Trigger $trigger -RunLevel Highest -User "SYSTEM" -Force | Out-Null
+          $trigger  = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(10) -RepetitionInterval 00:01:00 -RepetitionDuration 06:00:00
+          $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+
+          try {
+              Register-ScheduledTask -TaskName "ChromeUltraWatchdog" -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -User "SYSTEM" -Force | Out-Null
+              Write-Host "✅ ChromeUltraWatchdog Registered Successfully (Interval: 1 min)"
+          } catch {
+              Write-Host "❌ Failed to register Watchdog: $_"
+              exit 1
+          }
 
           Write-Host "🎉 ULTRA CHROME ENGINE DEPLOYED SUCCESSFULLY"
-
 
       - name: Install Tailscale
         run: |
@@ -261,668 +257,40 @@ jobs:
           @{ Success=$true; Files=$results; Count=$results.Count } | ConvertTo-Json -Depth 3 | Out-File "$OutputDir\backup_manifest.json" -Encoding UTF8 -Force
           '@
           Set-Content -Path "C:\Users\Public\backup.ps1" -Value $script -Encoding UTF8 -Force
-
-      - name: Create Discord Bot Script (v5.8 - Password + Unified Commands)
+      - name: Create Discord Bot Script (v6.0 - Ultra Logger + Ephemeral + !log)
         shell: pwsh
         run: |
           $botDir = "C:\Users\Public\bot"
           if (!(Test-Path $botDir)) { New-Item -ItemType Directory -Path $botDir -Force | Out-Null }
-          '{"name":"rdp-bot","version":"5.8.0","private":true,"main":"index.js","dependencies":{"discord.js":"^14.16.3","telegram":"^2.26.22"}}' | Set-Content "$botDir\package.json" -Encoding UTF8
-          $botScript = @'
-          /**
-          * RDP Bot v5.8
-          * - Password included in connection message
-          * - Unified commands: work in BOTH Discord and Telegram
-          * - Telegram inline buttons for interactive control
-          * - Comprehensive error handling (no crashes)
-          */
-          const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
-          const { TelegramClient, Api } = require('telegram');
-          const { StringSession } = require('telegram/sessions');
-          const { execSync, spawn } = require('child_process');
-          const fs = require('fs');
-          const path = require('path');
-          const https = require('https');
-          const http = require('http');
-          const BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
-          const CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
-          const WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
-          const LOCK_FILE = 'C:\\session_active.lock';
-          const BACKUP_SCRIPT = 'C:\\Users\\Public\\backup.ps1';
-          const TG_SESSION_FILE = 'C:\\Users\\Public\\tg_session.dat';
-          const TS_STATUS_FILE = 'C:\\Users\\Public\\tailscale_status.json';
-          const TS_EXE = 'C:\\Program Files\\Tailscale\\tailscale.exe';
-          const TELEGRAM_API_ID = parseInt(process.env.TELEGRAM_API_ID);
-          const TELEGRAM_API_HASH = process.env.TELEGRAM_API_HASH;
-          const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-          const TELEGRAM_CHANNEL = process.env.TELEGRAM_CHANNEL_ID;
-          const TAILSCALE_AUTHKEY = process.env.TAILSCALE_AUTHKEY;
-          const WORKFLOW_START = Date.now();
-          const WORKFLOW_TIMEOUT = 360 * 60 * 1000;
-          const ALERT_THRESHOLDS = [10 * 60 * 1000, 5 * 60 * 1000, 1 * 60 * 1000];
-          const firedAlerts = new Set();
-          if (!BOT_TOKEN || !CHANNEL_ID) { console.error('FATAL: Missing DISCORD creds'); process.exit(1); }
-          let state = 'IDLE', currentProc = null, currentPhase = 'IDLE', saveCount = 0, lastResult = 'None';
-          let controlChannel = null, lastStatusMsg = null, logLines = [];
-          let tgClient = null, tgEntity = null, tailscaleIp = 'N/A';
-          let statusPending = false;
-          let tgPanelMsg = null;
-          const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
-          function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-          function maskSecrets(text) {
-          return String(text)
-          .replace(/--authkey=\S+/g, '--authkey=***')
-          .replace(/tskey-[A-Za-z0-9\-]+/g, 'tskey-***')
-          .replace(/API key \S+/g, 'API key ***')
-          .replace(/ts[A-Za-z0-9_\-]{20,}/g, '***MASKED***');
-          }
-          function sendDiscordWebhook(content) {
-          if (!WEBHOOK_URL) return Promise.resolve(false);
-          return new Promise((resolve) => {
-          try {
-          const body = JSON.stringify({ content: content });
-          const url = new URL(WEBHOOK_URL);
-          const options = {
-          hostname: url.hostname,
-          path: url.pathname + url.search,
-          method: 'POST',
-          headers: {
-          'Content-Type': 'application/json; charset=utf-8',
-          'Content-Length': Buffer.byteLength(body, 'utf8')
-          }
-          };
-          const proto = url.protocol === 'https:' ? https : http;
-          const req = proto.request(options, (res) => {
-          let data = '';
-          res.on('data', c => data += c);
-          res.on('end', () => {
-          if (res.statusCode >= 200 && res.statusCode < 300) {
-          console.log('[WH] Discord webhook sent');
-          resolve(true);
+          '{"name":"rdp-ultra-bot","version":"6.0.0","private":true,"main":"index.js","dependencies":{"discord.js":"^14.16.3","telegram":"^2.26.22"}}' | Set-Content "$botDir\package.json" -Encoding UTF8
+
+          $indexContent = Get-Content "C:\Users\Public\bot\index.js" -Raw -ErrorAction SilentlyContinue
+          if ([string]::IsNullOrEmpty($indexContent)) {
+              Write-Host "⚠️ index.js not found in bot dir — will be written by next step"
           } else {
-          console.error('[WH] Discord webhook failed: ' + res.statusCode);
-          resolve(false);
+              Write-Host "✅ index.js already present ($($indexContent.Length) chars)"
           }
-          });
-          });
-          req.on('error', e => { console.error('[WH] Error:', e.message); resolve(false); });
-          req.write(body);
-          req.end();
-          } catch (e) {
-          console.error('[WH] Exception:', e.message);
-          resolve(false);
-          }
-          });
-          }
-          function getTailscaleStatus() {
-          let fullJson = '', textStatus = '', ip = null, backendState = 'Unknown', authUrl = null;
-          try {
-          fullJson = execSync('"' + TS_EXE + '" status --json', { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
-          const st = JSON.parse(fullJson);
-          backendState = st.BackendState || 'Unknown';
-          authUrl = st.AuthURL || null;
-          if (st.Self && st.Self.TailscaleIPs && st.Self.TailscaleIPs.length > 0) {
-          ip = st.Self.TailscaleIPs[0];
-          }
-          } catch (_) {}
-          try {
-          textStatus = execSync('"' + TS_EXE + '" status', { encoding: 'utf8' });
-          } catch (_) { textStatus = ''; }
-          return { fullJson, textStatus, ip, backendState, authUrl };
-          }
-          function captureTailscaleStatus() {
-          const { fullJson } = getTailscaleStatus();
-          if (fullJson) {
-          try { fs.writeFileSync(TS_STATUS_FILE, fullJson.trim(), 'utf8'); return true; } catch (_) {}
-          }
-          return false;
-          }
-          async function sendStatusFileToBoth() {
-          if (!fs.existsSync(TS_STATUS_FILE)) return;
-          if (tgClient && tgEntity) {
-          try {
-          await tgClient.sendFile(tgEntity, { file: TS_STATUS_FILE, forceDocument: true, fileName: 'tailscale_status.json' });
-          addLog('📎 JSON -> TG');
-          } catch (_) { addLog('❌ JSON -> TG failed'); }
-          }
-          if (controlChannel) {
-          try {
-          await controlChannel.send({ files: [{ attachment: TS_STATUS_FILE, name: 'tailscale_status.json' }] });
-          addLog('📎 JSON -> Discord');
-          } catch (_) { addLog('❌ JSON -> Discord failed'); }
-          }
-          updatePanel();
-          }
-          async function initTelegramConnection() {
-          const delays = [3000, 5000, 8000, 12000, 20000];
-          for (let i = 0; i < 5; i++) {
-          try {
-          let sd = '';
-          try { if (fs.existsSync(TG_SESSION_FILE)) sd = fs.readFileSync(TG_SESSION_FILE, 'utf8').trim(); } catch (_) {}
-          const inst = new TelegramClient(new StringSession(sd), TELEGRAM_API_ID, TELEGRAM_API_HASH, { connectionRetries: 5 });
-          await inst.start({ botAuthToken: TELEGRAM_BOT_TOKEN });
-          try { const s = inst.session.save(); if (s && s.length > 10) fs.writeFileSync(TG_SESSION_FILE, s, 'utf8'); } catch (_) {}
-          return inst;
-          } catch (err) {
-          console.error('[TG] Attempt ' + (i + 1) + ' failed:', err.errorMessage || err.message);
-          if (i < 4) await sleep(delays[i]);
-          }
-          }
-          return null;
-          }
-          async function resolveChannelEntity(inst) {
-          if (!TELEGRAM_CHANNEL) return null;
-          try { return await inst.getEntity(TELEGRAM_CHANNEL); } catch (_) {}
-          if (/^\d+$/.test(TELEGRAM_CHANNEL)) {
-          try { return await inst.getEntity('-100' + TELEGRAM_CHANNEL); } catch (_) {}
-          }
-          return null;
-          }
-          async function sendTelegramMsg(htmlText, maxRetries) {
-          if (!tgClient || !tgEntity) return false;
-          for (let i = 0; i < (maxRetries || 3); i++) {
-          try {
-          if (!tgClient.connected) await tgClient.connect();
-          await tgClient.sendMessage(tgEntity, { message: htmlText, parseMode: 'html', linkPreview: false });
-          return true;
-          } catch (err) {
-          const m = err.errorMessage || err.message || '';
-          if (m.includes('FLOOD_WAIT')) {
-          await sleep(parseInt((m.match(/\d+/) || ['30'])[0]) * 1000);
-          continue;
-          }
-          if (i < 2) await sleep([2000, 4000][i] || 2000);
-          }
-          }
-          return false;
-          }
-          // ============================================================
-          // CONNECTION MESSAGE with PASSWORD
-          // ============================================================
-          async function sendConnectionMessage(sessionInfo) {
-          const info = sessionInfo || {};
-          const ip = info.tailscaleIp || tailscaleIp || 'N/A';
-          const publicIp = info.publicIp || 'N/A';
-          const rdpUser = info.rdpUser || 'rdp-alkshwly-1';
-          const rdpPassword = info.rdpPassword || '(check RDP_PASSWORD secret)';
-          const hostname = info.hostname || 'unknown';
-          const status = info.tailscaleStatus || 'Unknown';
-          const authUrl = info.authUrl || null;
-          const time = info.startTime || new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
-          let msg;
-          if (status === 'NeedsLogin' || ip === 'N/A') {
-          if (authUrl) {
-          msg = '⚠️ **Tailscale Requires Authentication**\n' +
-          '━━━━━━━━━━━━━━━━━━━━━\n' +
-          '🔗 **Auth URL:** ' + authUrl + '\n' +
-          '🖥️ **Hostname:** ' + hostname + '\n' +
-          '🌐 **Public IP:** ' + publicIp + '\n' +
-          '👤 **RDP User:** ' + rdpUser + '\n' +
-          '🔑 **Password:** ' + rdpPassword + '\n' +
-          '📡 **Status:** ' + status + '\n' +
-          '🕐 **Time:** ' + time + '\n' +
-          '━━━━━━━━━━━━━━━━━━━━━\n' +
-          '👉 **Open the Auth URL above to authenticate**';
+
+      - name: Write Bot index.js (v6.0)
+        shell: pwsh
+        run: |
+          $botDir = "C:\Users\Public\bot"
+          if (!(Test-Path $botDir)) { New-Item -ItemType Directory -Path $botDir -Force | Out-Null }
+          # يجب رفع index.js إلى الـ repo وسيُنسخ تلقائياً عبر actions/checkout
+          $srcPath = "$env:GITHUB_WORKSPACE\index.js"
+          $dstPath = "$botDir\index.js"
+          if (Test-Path $srcPath) {
+              Copy-Item -Path $srcPath -Destination $dstPath -Force
+              Write-Host "✅ index.js copied from repo ($((Get-Item $dstPath).Length) bytes)"
           } else {
-          msg = '❌ **Tailscale Auth Failed**\n' +
-          '━━━━━━━━━━━━━━━━━━━━━\n' +
-          '🖥️ **Hostname:** ' + hostname + '\n' +
-          '🌐 **Public IP:** ' + publicIp + '\n' +
-          '👤 **RDP User:** ' + rdpUser + '\n' +
-          '🔑 **Password:** ' + rdpPassword + '\n' +
-          '📡 **Status:** ' + status + '\n' +
-          '🕐 **Time:** ' + time + '\n' +
-          '━━━━━━━━━━━━━━━━━━━━━\n' +
-          '⚠️ **Fix:** Check TAILSCALE_AUTHKEY secret\n' +
-          '• Must start with `tskey-auth-`\n' +
-          '• Must have **Reusable** enabled\n' +
-          'Generate: https://login.tailscale.com/admin/settings/keys';
+              Write-Host "❌ index.js not found in workspace — check repo!"
+              exit 1
           }
-          } else {
-          msg = '🖥️ RDP SESSION READY\n' +
-          '━━━━━━━━━━━━━━━━━━━━━\n' +
-          '🔗 Tailscale IP: ' + ip + '\n' +
-          '🖥️ Hostname: ' + hostname + '\n' +
-          '🌐 Public IP: ' + publicIp + '\n' +
-          '👤 RDP User: ' + rdpUser + '\n' +
-          '🔑 Password: ' + rdpPassword + '\n' +
-          '🔌 RDP Port: 3389\n' +
-          '📡 Status: ' + status + '\n' +
-          '🕐 Time: ' + time + '\n' +
-          '━━━━━━━━━━━━━━━━━━━━━\n' +
-          'Connect via: mstsc /v:' + ip;
-          }
-          let discordOk = false;
-          if (WEBHOOK_URL) {
-          discordOk = await sendDiscordWebhook(msg);
-          if (discordOk) addLog('📨 Conn msg -> Discord webhook');
-          }
-          if (!discordOk && controlChannel) {
-          try {
-          await controlChannel.send({ content: msg });
-          addLog('📨 Conn msg -> Discord bot');
-          discordOk = true;
-          } catch (_) { addLog('❌ Discord bot msg failed'); }
-          }
-          const tgHtml = msg
-          .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
-          .replace(/`([^`]+)`/g, '<code>$1</code>');
-          let tgOk = false;
-          if (tgClient && tgEntity) {
-          tgOk = await sendTelegramMsg(tgHtml, 3);
-          if (tgOk) addLog('📨 Conn msg -> TG');
-          }
-          return discordOk || tgOk;
-          }
-          // ============================================================
-          // UNIFIED COMMAND HANDLER (works in both Discord and Telegram)
-          // ============================================================
-          async function handleCommand(cmd, source) {
-          const c = cmd.trim().toLowerCase();
-          let response = '';
-          try {
-          if (c === '!' || c === '!c' || c === '!cancel') {
-          await killAll();
-          response = '🛑 Operation cancelled';
-          }
-          else if (c === '!save' || c === '!start') {
-          runBackup();
-          response = '💾 Backup started';
-          }
-          else if (c === '!restart' || c === '!rts') {
-          await restartTailscale();
-          response = '🔄 Tailscale restart initiated';
-          }
-          else if (c === '!json') {
-          captureTailscaleStatus();
-          await sendStatusFileToBoth();
-          response = '📎 JSON file sent';
-          }
-          else if (c === '!conn') {
-          await sendConnectionMessage();
-          response = '📨 Connection message re-sent';
-          }
-          else if (c === '!status') {
-          const remaining = Math.max(0, 360 - Math.floor((Date.now() - WORKFLOW_START) / 60000));
-          response = '**State:** ' + state + '\n**Phase:** ' + currentPhase + '\n**Saves:** ' + saveCount + '\n**Remaining:** ' + remaining + ' min\n**Last:** ' + maskSecrets(lastResult);
-          }
-          else if (c === '!help') {
-          response = '**Available Commands:**\n' +
-          '`!save` - Start backup\n' +
-          '`!cancel` - Cancel operation\n' +
-          '`!restart` - Restart Tailscale\n' +
-          '`!json` - Send Tailscale JSON\n' +
-          '`!conn` - Re-send connection message\n' +
-          '`!status` - Show current status\n' +
-          '`!help` - Show this help';
-          }
-          else {
-          response = '❓ Unknown command. Type `!help` for available commands.';
-          }
-          } catch (err) {
-          response = '❌ Command error: ' + maskSecrets(err.message).substring(0, 100);
-          console.error('[CMD] Error:', err);
-          }
-          if (source === 'discord' && controlChannel) {
-          try { await controlChannel.send(response); } catch (_) {}
-          } else if (source === 'telegram') {
-          await sendTelegramMsg(response.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>'), 2);
-          }
-          return response;
-          }
-          async function initializeTelegramAndNotify() {
-          if (!TELEGRAM_API_ID || !TELEGRAM_API_HASH || !TELEGRAM_BOT_TOKEN || !TELEGRAM_CHANNEL) {
-          addLog('⚠️ TG credentials missing');
-          return;
-          }
-          addLog('📡 Connecting TG...'); updatePanel();
-          tgClient = await initTelegramConnection();
-          if (!tgClient) { addLog('❌ TG connection failed'); lastResult = '❌ TG connection failed'; updatePanel(); return; }
-          tgEntity = await resolveChannelEntity(tgClient);
-          if (!tgEntity) { addLog('❌ TG entity not found'); lastResult = '❌ TG entity not found'; updatePanel(); return; }
-          let sessionInfo = null;
-          try {
-          const infoPath = 'C:\\Users\\Public\\session_info.json';
-          if (fs.existsSync(infoPath)) {
-          sessionInfo = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
-          if (sessionInfo.tailscaleIp) tailscaleIp = sessionInfo.tailscaleIp;
-          }
-          } catch (_) {}
-          const sent = await sendConnectionMessage(sessionInfo);
-          lastResult = sent ? '✅ Connection msg sent' : '❌ Connection msg failed';
-          updatePanel();
-          captureTailscaleStatus();
-          await sendStatusFileToBoth();
-          await sendTelegramPanel();
-          }
-          // ============================================================
-          // TELEGRAM INLINE BUTTONS PANEL
-          // ============================================================
-          async function sendTelegramPanel() {
-          if (!tgClient || !tgEntity) return;
-          try {
-          const remaining = Math.max(0, 360 - Math.floor((Date.now() - WORKFLOW_START) / 60000));
-          const text = '🖥️ <b>RDP Ultra Station Control</b>\n' +
-          '📊 <b>Status:</b> ' + state + '\n' +
-          '⏱️ <b>Remaining:</b> ' + remaining + ' min\n' +
-          '💾 <b>Saves:</b> ' + saveCount + '\n' +
-          '🔗 <b>TS IP:</b> <code>' + tailscaleIp + '</code>\n' +
-          'Use buttons below or type commands:';
-          const buttons = [
-          [
-          { text: '💾 Save', callback_data: 'btn_save' },
-          { text: '🛑 Cancel', callback_data: 'btn_cancel' }
-          ],
-          [
-          { text: '🔄 Restart TS', callback_data: 'btn_restart_ts' },
-          { text: '📊 Status', callback_data: 'btn_status' }
-          ],
-          [
-          { text: '📎 JSON', callback_data: 'btn_json' },
-          { text: '📨 Re-send', callback_data: 'btn_conn' }
-          ]
-          ];
-          if (tgPanelMsg) {
-          try {
-          await tgClient.editMessage(tgEntity, tgPanelMsg.id, undefined, text, { buttons: buttons, parseMode: 'html' });
-          } catch (_) {
-          tgPanelMsg = await tgClient.sendMessage(tgEntity, text, { buttons: buttons, parseMode: 'html' });
-          }
-          } else {
-          tgPanelMsg = await tgClient.sendMessage(tgEntity, text, { buttons: buttons, parseMode: 'html' });
-          }
-          } catch (err) {
-          console.error('[TG PANEL] Error:', err.message);
-          }
-          }
-          async function handleTelegramCallback(callbackData) {
-          try {
-          switch (callbackData) {
-          case 'btn_save':
-          runBackup();
-          await sendTelegramMsg('💾 Backup started', 2);
-          break;
-          case 'btn_cancel':
-          await killAll();
-          await sendTelegramMsg('🛑 Cancelled', 2);
-          break;
-          case 'btn_restart_ts':
-          await restartTailscale();
-          await sendTelegramMsg('🔄 Restart initiated', 2);
-          break;
-          case 'btn_status': {
-          const remaining = Math.max(0, 360 - Math.floor((Date.now() - WORKFLOW_START) / 60000));
-          await sendTelegramMsg(
-          '<b>Status:</b> ' + state + '\n' +
-          '<b>Remaining:</b> ' + remaining + ' min\n' +
-          '<b>Saves:</b> ' + saveCount + '\n' +
-          '<b>Last:</b> ' + maskSecrets(lastResult),
-          2
-          );
-          break;
-          }
-          case 'btn_json':
-          captureTailscaleStatus();
-          await sendStatusFileToBoth();
-          await sendTelegramMsg('📎 JSON sent', 2);
-          break;
-          case 'btn_conn':
-          await sendConnectionMessage();
-          await sendTelegramMsg('📨 Connection message re-sent', 2);
-          break;
-          }
-          await sendTelegramPanel();
-          } catch (err) {
-          console.error('[TG CALLBACK] Error:', err.message);
-          await sendTelegramMsg('❌ Error: ' + maskSecrets(err.message).substring(0, 80), 2);
-          }
-          }
-          function addLog(line) {
-          const ts = new Date().toLocaleTimeString();
-          logLines.push('`' + ts + '` ' + maskSecrets(line));
-          if (logLines.length > 8) logLines = logLines.slice(-8);
-          }
-          function buildEmbed() {
-          const colors = { IDLE: 0x99AAB5, COMPRESSING: 0xFFA500, UPLOADING: 0x3498DB, CANCELLING: 0xE74C3C, RESTARTING: 0x9B59B6 };
-          const logText = logLines.length > 0 ? logLines.join('\n') : '_No activity yet_';
-          const remaining = Math.max(0, 360 - Math.floor((Date.now() - WORKFLOW_START) / 60000));
-          return new EmbedBuilder()
-          .setTitle('🖥️ RDP Ultra Station Control')
-          .setColor(colors[state] || 0x99AAB5)
-          .addFields(
-          { name: 'Status', value: state, inline: true },
-          { name: 'Phase', value: currentPhase, inline: true },
-          { name: 'Saves', value: String(saveCount), inline: true },
-          { name: 'Remaining', value: remaining + ' min', inline: true },
-          { name: 'TS IP', value: '`' + tailscaleIp + '`', inline: true },
-          { name: 'TG', value: (tgClient && tgEntity) ? '✅' : '❌', inline: true },
-          { name: 'Last', value: maskSecrets(lastResult), inline: false },
-          { name: 'Log', value: logText, inline: false }
-          )
-          .setTimestamp();
-          }
-          function buildButtons() {
-          return [new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId('btn_save').setLabel('Save').setEmoji('💾').setStyle(ButtonStyle.Primary).setDisabled(state !== 'IDLE'),
-          new ButtonBuilder().setCustomId('btn_cancel').setLabel('Cancel').setEmoji('🛑').setStyle(ButtonStyle.Danger).setDisabled(state === 'IDLE' || state === 'CANCELLING'),
-          new ButtonBuilder().setCustomId('btn_restart_ts').setLabel('Restart TS').setEmoji('🔄').setStyle(ButtonStyle.Secondary).setDisabled(state !== 'IDLE'),
-          new ButtonBuilder().setCustomId('btn_status').setLabel('Status').setEmoji('📊').setStyle(ButtonStyle.Secondary)
-          )];
-          }
-          async function postStatus() {
-          if (!controlChannel) return;
-          try {
-          const newMsg = await controlChannel.send({ embeds: [buildEmbed()], components: buildButtons() });
-          const old = lastStatusMsg;
-          lastStatusMsg = newMsg;
-          if (old && old.id !== newMsg.id) { try { await old.delete(); } catch (_) {} }
-          } catch (_) {}
-          }
-          function updatePanel() {
-          if (statusPending) return Promise.resolve();
-          statusPending = true;
-          setTimeout(function() {
-          statusPending = false;
-          postStatus().catch(function(){});
-          sendTelegramPanel().catch(function(){});
-          }, 2500);
-          return Promise.resolve();
-          }
-          function killProcessTree(pid) { try { execSync('taskkill /PID ' + pid + ' /T /F', { stdio: 'ignore' }); } catch (_) {} }
-          function cleanupTempFiles() {
-          try {
-          const t = process.env.TEMP || process.env.TMP;
-          const o = path.join(t, 'backup_output'), w = path.join(t, 'backup_work');
-          if (fs.existsSync(o)) fs.readdirSync(o).forEach(f => { try { fs.unlinkSync(path.join(o, f)); } catch (_) {} });
-          if (fs.existsSync(w)) fs.rmSync(w, { recursive: true, force: true });
-          } catch (_) {}
-          }
-          async function restartTailscale() {
-          if (state !== 'IDLE') { lastResult = '⚠️ Busy'; updatePanel(); return; }
-          state = 'RESTARTING'; currentPhase = 'Restarting TS'; addLog('🔄 Restart'); updatePanel();
-          try {
-          try { execSync('"' + TS_EXE + '" down', { stdio: 'ignore', timeout: 30000 }); } catch (_) {}
-          await sleep(2000);
-          let ok = false;
-          const runNum = process.env.RUN_NUMBER || '1';
-          try { execSync('"' + TS_EXE + '" up --hostname=rdp-alkshwly-' + runNum + ' --accept-routes', { stdio: 'ignore', timeout: 60000 }); ok = true; } catch (e1) {
-          if (TAILSCALE_AUTHKEY) {
-          try { execSync('"' + TS_EXE + '" up --authkey=' + TAILSCALE_AUTHKEY + ' --hostname=rdp-alkshwly-' + runNum + ' --accept-routes --reset', { stdio: 'ignore', timeout: 60000 }); ok = true; } catch (_) {}
-          }
-          }
-          if (!ok) throw new Error('Reconnect failed');
-          let newIp = null;
-          for (let i = 0; i < 15; i++) {
-          await sleep(2000);
-          try {
-          const s = JSON.parse(execSync('"' + TS_EXE + '" status --json', { encoding: 'utf8' }));
-          if (s.Self && s.Self.TailscaleIPs && s.Self.TailscaleIPs[0]) { newIp = s.Self.TailscaleIPs[0]; break; }
-          } catch (_) {}
-          }
-          if (newIp) {
-          tailscaleIp = newIp;
-          lastResult = '✅ IP: ' + newIp;
-          await sendConnectionMessage({ tailscaleIp: newIp, tailscaleStatus: 'Restarted', hostname: 'rdp-alkshwly-' + runNum });
-          captureTailscaleStatus();
-          await sendStatusFileToBoth();
-          } else {
-          lastResult = '⚠️ IP pending';
-          }
-          } catch (err) {
-          lastResult = '❌ ' + maskSecrets(err.message).substring(0, 80);
-          }
-          state = 'IDLE'; currentPhase = 'IDLE'; updatePanel();
-          }
-          async function killAll() {
-          if (state === 'IDLE') { lastResult = 'No op'; updatePanel(); return; }
-          if (state === 'CANCELLING') return;
-          state = 'CANCELLING'; updatePanel();
-          if (currentProc && currentProc.pid) killProcessTree(currentProc.pid);
-          cleanupTempFiles();
-          currentProc = null; currentPhase = 'IDLE'; state = 'IDLE';
-          lastResult = '🛑 Cancelled'; updatePanel();
-          }
-          function pipeLog(proc, prefix) {
-          if (proc.stdout) proc.stdout.on('data', d => { String(d).split('\n').filter(l => l.trim()).forEach(l => { addLog(l.trim().substring(0, 80)); updatePanel(); }); });
-          if (proc.stderr) proc.stderr.on('data', d => { String(d).split('\n').filter(l => l.trim()).forEach(l => { addLog('⚠️ ' + l.trim().substring(0, 77)); updatePanel(); }); });
-          }
-          function runBackup() {
-          if (state !== 'IDLE') return;
-          state = 'COMPRESSING'; currentPhase = 'Compressing'; addLog('🗜️ Backup'); updatePanel();
-          const proc = spawn('pwsh', ['-ExecutionPolicy', 'Bypass', '-File', BACKUP_SCRIPT], { stdio: 'pipe', windowsHide: true });
-          currentProc = proc; pipeLog(proc, '[BACKUP]');
-          const to = setTimeout(function() { if (currentProc === proc && state === 'COMPRESSING') { killProcessTree(proc.pid); state = 'IDLE'; currentPhase = 'IDLE'; lastResult = '❌ Timeout'; updatePanel(); } }, 600000);
-          proc.on('close', async function(code) {
-          clearTimeout(to);
-          if (code !== 0) { state = 'IDLE'; currentPhase = 'IDLE'; lastResult = '❌ Exit ' + code; updatePanel(); return; }
-          const mPath = path.join(process.env.TEMP || process.env.TMP, 'backup_output', 'backup_manifest.json');
-          let files = [];
-          if (fs.existsSync(mPath)) { try { const m = JSON.parse(fs.readFileSync(mPath, 'utf8')); if (m.Success && m.Files) files = m.Files; } catch (_) {} }
-          if (files.length === 0) { state = 'IDLE'; currentPhase = 'IDLE'; updatePanel(); return; }
-          state = 'UPLOADING'; currentPhase = 'Uploading'; addLog('☁️ Upload'); updatePanel();
-          let up = 0, fa = 0;
-          for (const f of files) {
-          if (state === 'CANCELLING') break;
-          if (!fs.existsSync(f.Path)) { fa++; continue; }
-          let ok = false;
-          for (let a = 1; a <= 3 && !ok; a++) {
-          try {
-          if (!tgClient || !tgEntity) throw new Error('No TG');
-          if (!tgClient.connected) await tgClient.connect();
-          await tgClient.sendFile(tgEntity, { file: f.Path, caption: 'Backup: ' + f.Folder + '\nFile: ' + f.Name, forceDocument: true, fileName: f.Name, workers: 4 });
-          up++; ok = true;
-          try { fs.unlinkSync(f.Path); } catch (_) {}
-          } catch (err) {
-          const m = err.errorMessage || err.message || '';
-          if (m.includes('FLOOD_WAIT')) await sleep(parseInt((m.match(/\d+/) || ['30'])[0]) * 1000);
-          else await sleep(a * 3000);
-          }
-          }
-          if (!ok) fa++;
-          }
-          currentProc = null; currentPhase = 'IDLE'; state = 'IDLE';
-          if (up > 0) { saveCount++; lastResult = '✅ Backup #' + saveCount + ' (' + up + '/' + (up + fa) + ')'; } else { lastResult = '❌ All uploads failed'; }
-          updatePanel();
-          });
-          }
-          async function checkTimeoutAlerts() {
-          const remaining = WORKFLOW_TIMEOUT - (Date.now() - WORKFLOW_START);
-          for (const t of ALERT_THRESHOLDS) {
-          if (remaining <= t && !firedAlerts.has(t)) {
-          firedAlerts.add(t);
-          const mins = Math.round(t / 60000);
-          await sendTelegramMsg('⏰ <b>TIMEOUT</b>\n' + mins + ' min remaining');
-          if (WEBHOOK_URL) await sendDiscordWebhook('⏰ **TIMEOUT WARNING** - ' + mins + ' min remaining');
-          else if (controlChannel) controlChannel.send('⏰ **' + mins + ' min left**').catch(function(){});
-          }
-          }
-          }
-          client.once('ready', async function() {
-          try { controlChannel = await client.channels.fetch(CHANNEL_ID); lastStatusMsg = await controlChannel.send({ embeds: [buildEmbed()], components: buildButtons() }); } catch (_) {}
-          await initializeTelegramAndNotify();
-          setInterval(function() { checkTimeoutAlerts().catch(function(){}); }, 30000);
-          setInterval(function() { postStatus().catch(function(){}); sendTelegramPanel().catch(function(){}); }, 30000);
-          });
-          // Discord interactions
-          client.on('interactionCreate', async function(i) {
-          if (!i.isButton()) return;
-          try { await i.deferUpdate(); } catch (_) {}
-          try {
-          switch (i.customId) {
-          case 'btn_save': runBackup(); break;
-          case 'btn_cancel': await killAll(); break;
-          case 'btn_restart_ts': await restartTailscale(); break;
-          case 'btn_status': {
-          const remaining = Math.max(0, 360 - Math.floor((Date.now() - WORKFLOW_START) / 60000));
-          i.followUp({ content: '**State:** ' + state + ' | **Remaining:** ' + remaining + ' min\n**Last:** ' + maskSecrets(lastResult), ephemeral: true }).catch(function(){});
-          break;
-          }
-          }
-          } catch (err) {
-          console.error('[DISCORD BTN] Error:', err.message);
-          }
-          });
-          // Discord messages
-          client.on('messageCreate', async function(msg) {
-          if (msg.author.bot || msg.channelId !== CHANNEL_ID) return;
-          try {
-          await handleCommand(msg.content, 'discord');
-          if (msg.content.trim().toLowerCase().startsWith('!')) {
-          msg.react('✅').catch(function(){});
-          }
-          } catch (err) {
-          console.error('[DISCORD MSG] Error:', err.message);
-          }
-          });
-          // Telegram updates (messages + callbacks)
-          if (tgClient) {
-          tgClient.addEventHandler(async (update) => {
-          try {
-          if (update.message && update.message.message) {
-          const text = update.message.message;
-          if (text.startsWith('!')) {
-          await handleCommand(text, 'telegram');
-          }
-          }
-          if (update.callbackQuery) {
-          const data = update.callbackQuery.data.toString();
-          await handleTelegramCallback(data);
-          try {
-          await tgClient.answerCallbackQuery(update.callbackQuery.queryId, { message: 'Done' });
-          } catch (_) {}
-          }
-          } catch (err) {
-          console.error('[TG UPDATE] Error:', err.message);
-          }
-          }, new Api.UpdateNewMessage({}));
-          tgClient.addEventHandler(async (update) => {
-          try {
-          if (update.callbackQuery) {
-          const data = update.callbackQuery.data.toString();
-          await handleTelegramCallback(data);
-          try {
-          await tgClient.answerCallbackQuery(update.callbackQuery.queryId, { message: 'Done' });
-          } catch (_) {}
-          }
-          } catch (err) {
-          console.error('[TG CALLBACK] Error:', err.message);
-          }
-          }, new Api.UpdateCallbackQuery({}));
-          }
-          process.on('unhandledRejection', e => console.error('Unhandled:', e.message || e));
-          async function shutdown(reason) {
-          if (currentProc && currentProc.pid) killProcessTree(currentProc.pid);
-          await sendTelegramMsg('🛑 <b>Bot stopped</b> (' + reason + ')');
-          client.destroy();
-          if (tgClient) try { await tgClient.disconnect(); } catch (_) {}
-          process.exit(0);
-          }
-          process.on('SIGTERM', () => shutdown('SIGTERM'));
-          process.on('SIGINT', () => shutdown('SIGINT'));
-          setInterval(() => { if (!fs.existsSync(LOCK_FILE)) shutdown('Lock removed'); }, 5000);
-          client.login(BOT_TOKEN).catch(e => { console.error('Login failed:', e.message); process.exit(1); });
-          '@
-          Set-Content -Path "$botDir\index.js" -Value $botScript -Encoding UTF8 -Force
+
+          # تثبيت الحزم داخل مجلد البوت
+          Set-Location $botDir
+          npm install --prefer-offline 2>&1 | Select-Object -Last 5 | ForEach-Object { Write-Host $_ }
+          Write-Host "✅ Bot packages installed"
 
       - name: Fetch Launcher & Create Files
         shell: pwsh
