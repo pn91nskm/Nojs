@@ -1,8 +1,8 @@
 /**
-RDP Ultra Bot v6.1 - Production Grade
+RDP Ultra Bot v6.2 - Production Grade
 Developed by AlkshwlyHacker | 2026
-v6.1: GramJS object-form panel, panel persistence, TG handlers registered,
-      btn_clean, mdToHtml unified, webhook auto-disable on 404, IDLE throttle
+v6.2: HTML escaping (root-cause), image fallback via @napi-rs/canvas,
+      single-fire shutdown, PID single-instance, Discord EDIT-not-resend
 */
 const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, AttachmentBuilder } = require('discord.js');
 const { TelegramClient, Api } = require('telegram');
@@ -39,6 +39,7 @@ const BOT_TOKEN        = process.env.DISCORD_BOT_TOKEN;
 const CHANNEL_ID       = process.env.DISCORD_CHANNEL_ID;
 const WEBHOOK_URL      = process.env.DISCORD_WEBHOOK_URL;
 const LOCK_FILE        = 'C:\session_active.lock';
+const PID_FILE         = 'C:\Users\Public\bot.pid';
 const BACKUP_SCRIPT    = 'C:\Users\Public\backup.ps1';
 const TG_SESSION_FILE  = 'C:\Users\Public\tg_session.dat';
 const TG_PANEL_FILE    = 'C:\Users\Public\tg_panel.dat';
@@ -58,6 +59,23 @@ if (!BOT_TOKEN || !CHANNEL_ID) {
   process.exit(1);
 }
 // ═══════════════════════════════════════════════════════
+//  v6.2 SINGLE-INSTANCE GUARD (PID)
+// ═══════════════════════════════════════════════════════
+try {
+  if (fs.existsSync(PID_FILE)) {
+    const oldPid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
+    if (oldPid && oldPid !== process.pid) {
+      let alive = false;
+      try { process.kill(oldPid, 0); alive = true; } catch (_) {}
+      if (alive) {
+        try { execSync('taskkill /PID ' + oldPid + ' /T /F', { stdio: 'ignore' }); } catch (_) {}
+        Logger.warn('Killed stale bot instance', { pid: oldPid });
+      }
+    }
+  }
+  fs.writeFileSync(PID_FILE, String(process.pid), 'utf8');
+} catch (_) {}
+// ═══════════════════════════════════════════════════════
 //  STATE MANAGEMENT
 // ═══════════════════════════════════════════════════════
 let state = 'IDLE', currentProc = null, currentPhase = 'IDLE';
@@ -66,7 +84,7 @@ let controlChannel = null, lastStatusMsg = null, logLines = [];
 let tgClient = null, tgEntity = null, tailscaleIp = 'N/A';
 let statusPending = false, tgPanelMsg = null;
 let lastTgPanelUpdate = 0, lastTgPanelState = '';
-let webhookDead = false;
+let webhookDead = false, shuttingDown = false;
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -82,10 +100,60 @@ function maskSecrets(text) {
     .replace(/API key \S+/g, 'API key ***')
     .replace(/ts[A-Za-z0-9_-]{20,}/g, 'MASKED');
 }
+// ═══════════════════════════════════════════════════════
+//  v6.2 HTML SAFETY + IMAGE FALLBACK
+// ═══════════════════════════════════════════════════════
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
 function mdToHtml(text) {
-  return String(text)
+  return escapeHtml(text)
     .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
     .replace(/`([^`]+)`/g, '<code>$1</code>');
+}
+let canvasLib = null;
+try { canvasLib = require('@napi-rs/canvas'); } catch (_) {
+  Logger.warn('canvas lib unavailable — image fallback disabled');
+}
+function wrapLine(line, max) {
+  if (line.length <= max) return [line];
+  const out = [];
+  let cur = '';
+  for (const part of line.split(' ')) {
+    if ((cur + ' ' + part).trim().length > max) { out.push(cur.trim()); cur = part; }
+    else cur += ' ' + part;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+function textToImageBuffer(text) {
+  if (!canvasLib) return null;
+  try {
+    const lines = [];
+    String(text).split('\n').forEach(l => lines.push(...wrapLine(l, 72)));
+    const fontSize = 30, lineH = 46, pad = 50;
+    const width = 1400;
+    const height = pad * 2 + lines.length * lineH;
+    const canvas = canvasLib.createCanvas(width, height);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#0e1621';
+    ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = fontSize + 'px "Segoe UI", "Consolas", sans-serif';
+    ctx.textBaseline = 'top';
+    let y = pad;
+    for (const l of lines) { ctx.fillText(l, pad, y); y += lineH; }
+    const buf = canvas.toBuffer('image/png');
+    buf.name = 'rdp_message.png';
+    return buf;
+  } catch (e) {
+    Logger.warn('Image render failed', { msg: e.message });
+    return null;
+  }
 }
 // ═══════════════════════════════════════════════════════
 //  UTILITY FUNCTIONS
@@ -202,7 +270,8 @@ async function resolveChannelEntity(inst) {
   Logger.warn('Telegram entity resolution failed');
   return null;
 }
-async function sendTelegramMsg(htmlText, maxRetries) {
+// v6.2: محاولة HTML مهرب → عند فشل parsing تُرسل الرسالة كصورة → ثم نص خام
+async function sendTelegramMsg(htmlText, maxRetries, plainText) {
   if (!tgClient || !tgEntity) return false;
   for (let i = 0; i < (maxRetries || 3); i++) {
     try {
@@ -215,8 +284,23 @@ async function sendTelegramMsg(htmlText, maxRetries) {
         await sleep(parseInt((m.match(/\d+/) || ['30'])[0]) * 1000);
         continue;
       }
+      if (/parse|entit|HTML/i.test(m)) break;
       if (i < 2) await sleep([2000, 4000][i] || 2000);
     }
+  }
+  if (plainText) {
+    const buf = textToImageBuffer(plainText.replace(/\*\*/g, '').replace(/`/g, ''));
+    if (buf) {
+      try {
+        await tgClient.sendFile(tgEntity, { file: buf, forceDocument: false });
+        Logger.success('Telegram message delivered as image');
+        return true;
+      } catch (e) { Logger.warn('Image fallback failed', { msg: e.message }); }
+    }
+    try {
+      await tgClient.sendMessage(tgEntity, { message: plainText, linkPreview: false });
+      return true;
+    } catch (_) {}
   }
   return false;
 }
@@ -296,7 +380,7 @@ async function sendConnectionMessage(sessionInfo) {
   }
   let tgOk = false;
   if (tgClient && tgEntity) {
-    tgOk = await sendTelegramMsg(mdToHtml(msg), 3);
+    tgOk = await sendTelegramMsg(mdToHtml(msg), 3, msg);
     if (tgOk) Logger.success('Connection msg -> Telegram');
   }
   return discordOk || tgOk;
@@ -378,7 +462,7 @@ async function handleCommand(cmd, source, interaction = null) {
   } else if (source === 'discord' && controlChannel) {
     try { await controlChannel.send(response); } catch (_) {}
   } else if (source === 'telegram') {
-    await sendTelegramMsg(mdToHtml(response), 2);
+    await sendTelegramMsg(mdToHtml(response), 2, response);
   }
   return response;
 }
@@ -415,7 +499,7 @@ async function initializeTelegramAndNotify() {
   await sendTelegramPanel(true);
 }
 // ═══════════════════════════════════════════════════════
-//  TELEGRAM PANEL (v6.1: object-form + persistence + throttle)
+//  TELEGRAM PANEL
 // ═══════════════════════════════════════════════════════
 async function sendTelegramPanel(force) {
   if (!tgClient || !tgEntity) return;
@@ -424,10 +508,10 @@ async function sendTelegramPanel(force) {
   try {
     const remaining = Math.max(0, 360 - Math.floor((Date.now() - WORKFLOW_START) / 60000));
     const text = '🖥️ <b>RDP Ultra Station Control</b>\n' +
-      '📊 <b>Status:</b> ' + state + '\n' +
+      '📊 <b>Status:</b> ' + escapeHtml(state) + '\n' +
       '⏱️ <b>Remaining:</b> ' + remaining + ' min\n' +
       '💾 <b>Saves:</b> ' + saveCount + '\n' +
-      '🔗 <b>TS IP:</b> <code>' + tailscaleIp + '</code>';
+      '🔗 <b>TS IP:</b> <code>' + escapeHtml(tailscaleIp) + '</code>';
     const buttons = [
       [{ text: '💾 Save',       callback_data: 'btn_save'       }, { text: '🛑 Cancel',  callback_data: 'btn_cancel'   }],
       [{ text: '🔄 Restart TS', callback_data: 'btn_restart_ts' }, { text: '📊 Status',  callback_data: 'btn_status'   }],
@@ -439,9 +523,7 @@ async function sendTelegramPanel(force) {
         await tgClient.editMessage(tgEntity, tgPanelMsg.id, { text, buttons, parseMode: 'html' });
       } catch (editErr) {
         const em = editErr.errorMessage || editErr.message || '';
-        if (em.includes('MESSAGE_NOT_MODIFIED')) {
-          // لا شيء تغيّر — نجاح صامت
-        } else {
+        if (!em.includes('MESSAGE_NOT_MODIFIED')) {
           tgPanelMsg = await tgClient.sendMessage(tgEntity, { message: text, buttons, parseMode: 'html', linkPreview: false });
           persistPanelId(tgPanelMsg.id);
         }
@@ -475,8 +557,8 @@ async function handleTelegramCallback(callbackData) {
       case 'btn_status': {
         const remaining = Math.max(0, 360 - Math.floor((Date.now() - WORKFLOW_START) / 60000));
         await sendTelegramMsg(
-          '📊 <b>Status:</b> ' + state + '\n⏱️ <b>Remaining:</b> ' + remaining +
-          ' min\n💾 <b>Saves:</b> ' + saveCount + '\n📝 <b>Last:</b> ' + maskSecrets(lastResult),
+          '📊 <b>Status:</b> ' + escapeHtml(state) + '\n⏱️ <b>Remaining:</b> ' + remaining +
+          ' min\n💾 <b>Saves:</b> ' + saveCount + '\n📝 <b>Last:</b> ' + escapeHtml(maskSecrets(lastResult)),
           2
         );
         break;
@@ -508,11 +590,11 @@ async function handleTelegramCallback(callbackData) {
     await sendTelegramPanel(true);
   } catch (err) {
     Logger.error('TG callback error', { data: callbackData, msg: err.message });
-    await sendTelegramMsg('❌ Error: ' + maskSecrets(err.message).substring(0, 80), 2);
+    await sendTelegramMsg('❌ Error: ' + escapeHtml(maskSecrets(err.message).substring(0, 80)), 2);
   }
 }
 // ═══════════════════════════════════════════════════════
-//  DISCORD EMBED & PANEL
+//  DISCORD EMBED & PANEL (v6.2: EDIT instead of send+delete)
 // ═══════════════════════════════════════════════════════
 function addLog(line) {
   Logger.info(line);
@@ -555,11 +637,13 @@ function buildButtons() {
 }
 async function postStatus() {
   if (!controlChannel) return;
+  const payload = { embeds: [buildEmbed()], components: buildButtons() };
   try {
-    const newMsg = await controlChannel.send({ embeds: [buildEmbed()], components: buildButtons() });
-    const old = lastStatusMsg;
-    lastStatusMsg = newMsg;
-    if (old && old.id !== newMsg.id) { try { await old.delete(); } catch (_) {} }
+    if (lastStatusMsg) {
+      try { await lastStatusMsg.edit(payload); return; }
+      catch (_) { lastStatusMsg = null; }
+    }
+    lastStatusMsg = await controlChannel.send(payload);
   } catch (e) { Logger.warn('Post status failed', { msg: e.message }); }
 }
 function updatePanel() {
@@ -694,7 +778,7 @@ function runBackup() {
     }
     const names = [...new Set(files.map(f => f.Folder))].join(', ');
     addLog('📦 Matched: ' + names);
-    sendTelegramMsg('📦 <b>Matched folders:</b> <code>' + names + '</code>', 1).catch(function () {});
+    sendTelegramMsg('📦 <b>Matched folders:</b> <code>' + escapeHtml(names) + '</code>', 1, '📦 Matched: ' + names).catch(function () {});
     state = 'UPLOADING'; currentPhase = 'Uploading';
     addLog('☁️ Upload started'); updatePanel();
     Logger.info('Upload started', { fileCount: files.length });
@@ -743,13 +827,12 @@ async function checkTimeoutAlerts() {
       firedAlerts.add(t);
       const mins = Math.round(t / 60000);
       Logger.warn('Timeout alert', { mins });
-      await sendTelegramMsg('⏰ <b>TIMEOUT WARNING</b>\n' + mins + ' min remaining');
+      await sendTelegramMsg('⏰ <b>TIMEOUT WARNING</b>\n' + mins + ' min remaining', 2, 'TIMEOUT WARNING - ' + mins + ' min remaining');
       if (WEBHOOK_URL && !webhookDead) await sendDiscordWebhook('⏰ TIMEOUT WARNING - ' + mins + ' min remaining');
       else if (controlChannel) controlChannel.send('⏰ ' + mins + ' min left').catch(function () {});
     }
   }
 }
-// ─── Discord Ready ───────────────────────────────────
 client.once('ready', async function () {
   Logger.success('Discord client ready', { guilds: client.guilds.cache.size });
   try {
@@ -763,7 +846,6 @@ client.once('ready', async function () {
   setInterval(function () { checkTimeoutAlerts().catch(function () {}); }, 30000);
   setInterval(function () { postStatus().catch(function () {}); sendTelegramPanel().catch(function () {}); }, 30000);
 });
-// ─── Discord Buttons ─────────────────────────────────
 client.on('interactionCreate', async function (i) {
   if (!i.isButton()) return;
   try {
@@ -808,7 +890,6 @@ client.on('interactionCreate', async function (i) {
     Logger.error('Button interaction error', { id: i.customId, msg: err.message });
   }
 });
-// ─── Discord Messages ─────────────────────────────────
 client.on('messageCreate', async function (msg) {
   if (msg.author.bot || msg.channelId !== CHANNEL_ID) return;
   try {
@@ -820,7 +901,6 @@ client.on('messageCreate', async function (msg) {
     Logger.error('Message handler error', { msg: err.message });
   }
 });
-// ─── Telegram Updates (v6.1: مسجلة فعلياً الآن) ────────
 function registerTelegramHandlers() {
   if (!tgClient) return;
   tgClient.addEventHandler(async (update) => {
@@ -846,21 +926,28 @@ function registerTelegramHandlers() {
   }, new Api.UpdateCallbackQuery({}));
   Logger.success('Telegram handlers registered');
 }
-// ─── Process Guards ───────────────────────────────────
+// ═══════════════════════════════════════════════════════
+//  v6.2 GUARDED SHUTDOWN (single-fire)
+// ═══════════════════════════════════════════════════════
 process.on('unhandledRejection', e => Logger.error('Unhandled rejection', { msg: e.message || e }));
 process.on('uncaughtException',  e => Logger.error('Uncaught exception', { msg: e.message, stack: e.stack }));
 async function shutdown(reason) {
+  if (shuttingDown) return;
+  shuttingDown = true;
   Logger.info('Shutdown initiated', { reason });
   if (currentProc && currentProc.pid) killProcessTree(currentProc.pid);
-  await sendTelegramMsg('🛑 <b>Bot stopped</b> (' + reason + ')');
-  client.destroy();
+  await Promise.race([
+    sendTelegramMsg('🛑 <b>Bot stopped</b> (' + escapeHtml(reason) + ')', 1),
+    sleep(4000)
+  ]);
+  try { client.destroy(); } catch (_) {}
   if (tgClient) try { await tgClient.disconnect(); } catch (_) {}
+  try { fs.unlinkSync(PID_FILE); } catch (_) {}
   process.exit(0);
 }
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT',  () => shutdown('SIGINT'));
-setInterval(() => { if (!fs.existsSync(LOCK_FILE)) shutdown('Lock removed'); }, 5000);
-// ─── Boot ─────────────────────────────────────────────
+setInterval(() => { if (!shuttingDown && !fs.existsSync(LOCK_FILE)) shutdown('Lock removed'); }, 5000);
 client.login(BOT_TOKEN).catch(e => {
   Logger.error('Discord login failed', { msg: e.message });
   process.exit(1);
