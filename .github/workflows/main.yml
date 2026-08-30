@@ -248,7 +248,7 @@ jobs:
         run: |
           cd C:\Users\Public
           npm init -y
-          npm install telegram@2.26.22 discord.js@14.16.3
+          npm install telegram@2.26.22 discord.js@14.16.3 @napi-rs/canvas@^1.0.0
 
       # ═══════════════════════════════════════════════════════════
       #  🆕 v6.1: سكربت النسخ — تعداد المستخدمين ديناميكياً + 7z + .nobackup
@@ -340,18 +340,13 @@ jobs:
           '@
           Set-Content -Path "C:\Users\Public\backup.ps1" -Value $script -Encoding UTF8 -Force
 
-      - name: Create Discord Bot Script (v6.1)
+      - name: Create Discord Bot Script (v6.2)
         shell: pwsh
         run: |
           $botDir = "C:\Users\Public\bot"
           if (!(Test-Path $botDir)) { New-Item -ItemType Directory -Path $botDir -Force | Out-Null }
-          '{"name":"rdp-ultra-bot","version":"6.1.0","private":true,"main":"index.js","dependencies":{"discord.js":"^14.16.3","telegram":"^2.26.22"}}' | Set-Content "$botDir\package.json" -Encoding UTF8 -Force
-          $indexContent = Get-Content "C:\Users\Public\bot\index.js" -Raw -ErrorAction SilentlyContinue
-          if ([string]::IsNullOrEmpty($indexContent)) {
-              Write-Host "⚠️ index.js not found in bot dir — will be written by next step"
-          } else {
-              Write-Host "✅ index.js already present ($($indexContent.Length) chars)"
-          }
+          '{"name":"rdp-ultra-bot","version":"6.2.0","private":true,"main":"index.js","dependencies":{"discord.js":"^14.16.3","telegram":"^2.26.22","@napi-rs/canvas":"^1.0.0"}}' | Set-Content "$botDir\package.json" -Encoding UTF8 -Force
+          Write-Host "✅ bot package.json written (v6.2 + canvas)"
 
       - name: Write Bot index.js (v6.1)
         shell: pwsh
