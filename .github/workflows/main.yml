@@ -1,3 +1,4 @@
+
 name: RDP_ULTRA_STATION_TELEGRAM
 on:
   workflow_dispatch:
@@ -584,19 +585,20 @@ jobs:
               startTime=$now
           } | ConvertTo-Json | Set-Content "C:\Users\Public\session_info.json" -Encoding UTF8
           Write-Host "✅ Session info written (with password)"
-          # ← FIX: كتابة الـ secrets في .env حتى يرثها البوت كـ subprocess
+          # كتابة الـ secrets في .env حتى يرثها البوت كـ subprocess
           $envFile = "C:\Users\Public\bot\.env"
-          @"
-DISCORD_BOT_TOKEN=$env:DISCORD_BOT_TOKEN
-DISCORD_CHANNEL_ID=$env:DISCORD_CHANNEL_ID
-DISCORD_WEBHOOK_URL=$env:DISCORD_WEBHOOK_URL
-TELEGRAM_API_ID=$env:TELEGRAM_API_ID
-TELEGRAM_API_HASH=$env:TELEGRAM_API_HASH
-TELEGRAM_BOT_TOKEN=$env:TELEGRAM_BOT_TOKEN
-TELEGRAM_CHANNEL_ID=$env:TELEGRAM_CHANNEL_ID
-TAILSCALE_AUTHKEY=$env:TAILSCALE_AUTHKEY
-RUN_NUMBER=$env:RUN_NUMBER
-"@ | Set-Content -Path $envFile -Encoding UTF8 -Force
+          $envLines = @(
+              "DISCORD_BOT_TOKEN=$env:DISCORD_BOT_TOKEN",
+              "DISCORD_CHANNEL_ID=$env:DISCORD_CHANNEL_ID",
+              "DISCORD_WEBHOOK_URL=$env:DISCORD_WEBHOOK_URL",
+              "TELEGRAM_API_ID=$env:TELEGRAM_API_ID",
+              "TELEGRAM_API_HASH=$env:TELEGRAM_API_HASH",
+              "TELEGRAM_BOT_TOKEN=$env:TELEGRAM_BOT_TOKEN",
+              "TELEGRAM_CHANNEL_ID=$env:TELEGRAM_CHANNEL_ID",
+              "TAILSCALE_AUTHKEY=$env:TAILSCALE_AUTHKEY",
+              "RUN_NUMBER=$env:RUN_NUMBER"
+          )
+          $envLines | Set-Content -Path $envFile -Encoding UTF8 -Force
           Write-Host "✅ .env file written for bot subprocess"
           Write-Host "🤖 Starting Discord/Telegram bot..."
           $restartCount  = 0
