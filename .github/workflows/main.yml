@@ -598,8 +598,15 @@ jobs:
                   -RedirectStandardOutput "$logDir\bot.out.log" `
                   -RedirectStandardError  "$logDir\bot.err.log"
           }
+          # ← FIX: اقتل أي instances قديمة قبل تشغيل البوت لمنع التكرار
+          Get-Process -Name "node" -ErrorAction SilentlyContinue | ForEach-Object {
+              Write-Host "⚠️ Killing stale node process PID: $($_.Id)"
+              try { taskkill /PID $_.Id /T /F 2>$null } catch {}
+          }
+          Start-Sleep -Seconds 2
           $botProc = Start-Bot
           Write-Host "🟢 Bot PID: $($botProc.Id)"
+          $maxRestarts = 5 # ← FIX: حد أقصى لإعادة التشغيل لمنع حلقة لا نهائية
           while (Test-Path $lockFile) {
               Start-Sleep -Seconds 5
               [System.IO.File]::WriteAllText($heartbeatFile,
@@ -633,12 +640,28 @@ jobs:
                   }
               }
               if ($botProc.HasExited) {
+                  # ← FIX: لا تُعيد التشغيل إذا أُزيل الـ lock (هذا سبب التكرار الرئيسي)
+                  if (-not (Test-Path $lockFile)) {
+                      Write-Host "🔒 Lock removed — skipping restart"
+                      break
+                  }
                   $restartCount++
                   $exitCode = $botProc.ExitCode
-                  Write-Host "⚠️ Bot exited (code=$exitCode, restart #$restartCount) — restarting..."
+                  Write-Host "⚠️ Bot exited (code=$exitCode, restart #$restartCount/$maxRestarts) — restarting..."
+                  # ← FIX: حد أقصى لمنع الحلقة اللانهائية
+                  if ($restartCount -gt $maxRestarts) {
+                      Write-Host "❌ Max restarts ($maxRestarts) reached — stopping to prevent infinite loop"
+                      break
+                  }
                   if (Test-Path "$logDir\bot.err.log") {
                       $tail = Get-Content "$logDir\bot.err.log" -Tail 5 -ErrorAction SilentlyContinue
                       if ($tail) { $tail | ForEach-Object { Write-Host "  ERR: $_" } }
+                  }
+                  # ← FIX: زيادة التأخير إلى 10 ثوانٍ لمنع الإرسال المتكرر السريع
+                  Start-Sleep -Seconds 10
+                  # ← FIX: اقتل أي عمليات node متبقية قبل التشغيل الجديد
+                  Get-Process -Name "node" -ErrorAction SilentlyContinue | ForEach-Object {
+                      try { taskkill /PID $_.Id /T /F 2>$null } catch {}
                   }
                   Start-Sleep -Seconds 2
                   $botProc = Start-Bot
@@ -648,6 +671,10 @@ jobs:
           Write-Host "🔒 Lock removed — stopping bot and cleaning up..."
           if (-not $botProc.HasExited) {
               try { taskkill /PID $($botProc.Id) /T /F 2>$null } catch {}
+          }
+          # ← FIX: اقتل جميع عمليات node المتبقية عند الإنهاء
+          Get-Process -Name "node" -ErrorAction SilentlyContinue | ForEach-Object {
+              try { taskkill /PID $_.Id /T /F 2>$null } catch {}
           }
           if (Test-Path $lockFile) { Remove-Item $lockFile -Force }
           Write-Host "✅ Session ended cleanly after $restartCount bot restart(s)"
