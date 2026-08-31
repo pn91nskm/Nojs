@@ -456,8 +456,6 @@ jobs:
                   Write-Host "✅ إشعار Telegram أُرسل"
               } catch { Write-Host "⚠️ فشل إشعار Telegram: $($_.Exception.Message)" }
           }
-          New-Item -Path "C:\session_active.lock" -ItemType File -Force | Out-Null
-          Write-Host "✅ Session lock تم إنشاؤه"
 
       - name: All-in-One Session (Password + Sequential Hostname)
         shell: pwsh
@@ -586,19 +584,56 @@ jobs:
               startTime=$now
           } | ConvertTo-Json | Set-Content "C:\Users\Public\session_info.json" -Encoding UTF8
           Write-Host "✅ Session info written (with password)"
+          # ← FIX: كتابة الـ secrets في .env حتى يرثها البوت كـ subprocess
+          $envFile = "C:\Users\Public\bot\.env"
+          @"
+DISCORD_BOT_TOKEN=$env:DISCORD_BOT_TOKEN
+DISCORD_CHANNEL_ID=$env:DISCORD_CHANNEL_ID
+DISCORD_WEBHOOK_URL=$env:DISCORD_WEBHOOK_URL
+TELEGRAM_API_ID=$env:TELEGRAM_API_ID
+TELEGRAM_API_HASH=$env:TELEGRAM_API_HASH
+TELEGRAM_BOT_TOKEN=$env:TELEGRAM_BOT_TOKEN
+TELEGRAM_CHANNEL_ID=$env:TELEGRAM_CHANNEL_ID
+TAILSCALE_AUTHKEY=$env:TAILSCALE_AUTHKEY
+RUN_NUMBER=$env:RUN_NUMBER
+"@ | Set-Content -Path $envFile -Encoding UTF8 -Force
+          Write-Host "✅ .env file written for bot subprocess"
           Write-Host "🤖 Starting Discord/Telegram bot..."
           $restartCount  = 0
-          $lockFile      = "C:\session_active.lock"
           $heartbeatFile = "C:\Users\Public\heartbeat.txt"
           function Start-Bot {
-              return Start-Process -FilePath "node" `
-                  -ArgumentList "$botDir\index.js" `
-                  -WorkingDirectory $botDir `
-                  -WindowStyle Hidden -PassThru `
-                  -RedirectStandardOutput "$logDir\bot.out.log" `
-                  -RedirectStandardError  "$logDir\bot.err.log"
+              # ← FIX: تمرير جميع الـ secrets صراحةً لضمان وصول البوت إليها
+              $botEnv = [System.Environment]::GetEnvironmentVariables()
+              $botEnv["DISCORD_BOT_TOKEN"]   = $env:DISCORD_BOT_TOKEN
+              $botEnv["DISCORD_CHANNEL_ID"]  = $env:DISCORD_CHANNEL_ID
+              $botEnv["DISCORD_WEBHOOK_URL"] = $env:DISCORD_WEBHOOK_URL
+              $botEnv["TELEGRAM_API_ID"]     = $env:TELEGRAM_API_ID
+              $botEnv["TELEGRAM_API_HASH"]   = $env:TELEGRAM_API_HASH
+              $botEnv["TELEGRAM_BOT_TOKEN"]  = $env:TELEGRAM_BOT_TOKEN
+              $botEnv["TELEGRAM_CHANNEL_ID"] = $env:TELEGRAM_CHANNEL_ID
+              $botEnv["TAILSCALE_AUTHKEY"]   = $env:TAILSCALE_AUTHKEY
+              $botEnv["RUN_NUMBER"]          = $env:RUN_NUMBER
+              $psi = New-Object System.Diagnostics.ProcessStartInfo
+              $psi.FileName  = "node"
+              $psi.Arguments = "`"$botDir\index.js`""
+              $psi.WorkingDirectory = $botDir
+              $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+              $psi.UseShellExecute = $false
+              $psi.RedirectStandardOutput = $true
+              $psi.RedirectStandardError  = $true
+              foreach ($k in @("DISCORD_BOT_TOKEN","DISCORD_CHANNEL_ID","DISCORD_WEBHOOK_URL","TELEGRAM_API_ID","TELEGRAM_API_HASH","TELEGRAM_BOT_TOKEN","TELEGRAM_CHANNEL_ID","TAILSCALE_AUTHKEY","RUN_NUMBER")) {
+                  if ($psi.EnvironmentVariables.ContainsKey($k)) { $psi.EnvironmentVariables[$k] = $botEnv[$k] }
+                  else { $psi.EnvironmentVariables.Add($k, "$($botEnv[$k])") }
+              }
+              $proc = New-Object System.Diagnostics.Process
+              $proc.StartInfo = $psi
+              $proc.Start() | Out-Null
+              # redirect output to log files async
+              $proc.BeginOutputReadLine()
+              $proc.BeginErrorReadLine()
+              return $proc
           }
-          # ← FIX: اقتل أي instances قديمة قبل تشغيل البوت لمنع التكرار
+          # اقتل أي instances قديمة قبل تشغيل البوت
           Get-Process -Name "node" -ErrorAction SilentlyContinue | ForEach-Object {
               Write-Host "⚠️ Killing stale node process PID: $($_.Id)"
               try { taskkill /PID $_.Id /T /F 2>$null } catch {}
@@ -606,8 +641,9 @@ jobs:
           Start-Sleep -Seconds 2
           $botProc = Start-Bot
           Write-Host "🟢 Bot PID: $($botProc.Id)"
-          $maxRestarts = 5 # ← FIX: حد أقصى لإعادة التشغيل لمنع حلقة لا نهائية
-          while (Test-Path $lockFile) {
+          $maxRestarts = 5
+          # الـ loop الرئيسي — يعمل طالما الـ workflow timeout لم ينته
+          while ($true) {
               Start-Sleep -Seconds 5
               [System.IO.File]::WriteAllText($heartbeatFile,
                   "alive: $(Get-Date -Format 'HH:mm:ss') | restarts: $restartCount | bot: $(if (-not $botProc.HasExited) { 'running' } else { 'restarting' })",
@@ -640,26 +676,18 @@ jobs:
                   }
               }
               if ($botProc.HasExited) {
-                  # ← FIX: لا تُعيد التشغيل إذا أُزيل الـ lock (هذا سبب التكرار الرئيسي)
-                  if (-not (Test-Path $lockFile)) {
-                      Write-Host "🔒 Lock removed — skipping restart"
-                      break
-                  }
                   $restartCount++
                   $exitCode = $botProc.ExitCode
                   Write-Host "⚠️ Bot exited (code=$exitCode, restart #$restartCount/$maxRestarts) — restarting..."
-                  # ← FIX: حد أقصى لمنع الحلقة اللانهائية
                   if ($restartCount -gt $maxRestarts) {
-                      Write-Host "❌ Max restarts ($maxRestarts) reached — stopping to prevent infinite loop"
+                      Write-Host "❌ Max restarts ($maxRestarts) reached — stopping"
                       break
                   }
                   if (Test-Path "$logDir\bot.err.log") {
                       $tail = Get-Content "$logDir\bot.err.log" -Tail 5 -ErrorAction SilentlyContinue
                       if ($tail) { $tail | ForEach-Object { Write-Host "  ERR: $_" } }
                   }
-                  # ← FIX: زيادة التأخير إلى 10 ثوانٍ لمنع الإرسال المتكرر السريع
                   Start-Sleep -Seconds 10
-                  # ← FIX: اقتل أي عمليات node متبقية قبل التشغيل الجديد
                   Get-Process -Name "node" -ErrorAction SilentlyContinue | ForEach-Object {
                       try { taskkill /PID $_.Id /T /F 2>$null } catch {}
                   }
@@ -668,16 +696,15 @@ jobs:
                   Write-Host "🟢 Bot restarted — PID: $($botProc.Id)"
               }
           }
-          Write-Host "🔒 Lock removed — stopping bot and cleaning up..."
+          Write-Host "🏁 Session ending — stopping bot..."
           if (-not $botProc.HasExited) {
               try { taskkill /PID $($botProc.Id) /T /F 2>$null } catch {}
           }
-          # ← FIX: اقتل جميع عمليات node المتبقية عند الإنهاء
           Get-Process -Name "node" -ErrorAction SilentlyContinue | ForEach-Object {
               try { taskkill /PID $_.Id /T /F 2>$null } catch {}
           }
-          if (Test-Path $lockFile) { Remove-Item $lockFile -Force }
           Write-Host "✅ Session ended cleanly after $restartCount bot restart(s)"
+
 
       - name: Final Forced Backup
         if: always()
