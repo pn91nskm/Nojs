@@ -85,6 +85,7 @@ let tgClient = null, tgEntity = null, tailscaleIp = 'N/A';
 let statusPending = false, tgPanelMsg = null;
 let lastTgPanelUpdate = 0, lastTgPanelState = '';
 let webhookDead = false, shuttingDown = false;
+let lastTgMsgText = '', lastTgMsgTime = 0; // ← حماية ضد التكرار في رسائل Telegram
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -273,6 +274,14 @@ async function resolveChannelEntity(inst) {
 // v6.2: محاولة HTML مهرب → عند فشل parsing تُرسل الرسالة كصورة → ثم نص خام
 async function sendTelegramMsg(htmlText, maxRetries, plainText) {
   if (!tgClient || !tgEntity) return false;
+  // ← منع إرسال نفس الرسالة أكثر من مرة خلال 10 ثوانٍ (يحل مشكلة التكرار)
+  const now = Date.now();
+  if (htmlText === lastTgMsgText && (now - lastTgMsgTime) < 10000) {
+    Logger.warn('Duplicate TG message suppressed', { text: htmlText.substring(0, 60) });
+    return false;
+  }
+  lastTgMsgText = htmlText;
+  lastTgMsgTime = now;
   for (let i = 0; i < (maxRetries || 3); i++) {
     try {
       if (!tgClient.connected) await tgClient.connect();
@@ -934,6 +943,8 @@ process.on('uncaughtException',  e => Logger.error('Uncaught exception', { msg: 
 async function shutdown(reason) {
   if (shuttingDown) return;
   shuttingDown = true;
+  // ← أوقف فحص الـ lock فوراً لمنع تكرار رسائل "Bot stopped"
+  if (typeof lockCheckInterval !== 'undefined') clearInterval(lockCheckInterval);
   Logger.info('Shutdown initiated', { reason });
   if (currentProc && currentProc.pid) killProcessTree(currentProc.pid);
   await Promise.race([
@@ -947,7 +958,13 @@ async function shutdown(reason) {
 }
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT',  () => shutdown('SIGINT'));
-setInterval(() => { if (!shuttingDown && !fs.existsSync(LOCK_FILE)) shutdown('Lock removed'); }, 5000);
+const lockCheckInterval = setInterval(() => {
+  if (shuttingDown) { clearInterval(lockCheckInterval); return; }
+  if (!fs.existsSync(LOCK_FILE)) {
+    clearInterval(lockCheckInterval); // ← أوقف الـ interval فوراً قبل shutdown لمنع التكرار
+    shutdown('Lock removed');
+  }
+}, 5000);
 client.login(BOT_TOKEN).catch(e => {
   Logger.error('Discord login failed', { msg: e.message });
   process.exit(1);
