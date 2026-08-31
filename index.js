@@ -4,6 +4,18 @@ Developed by AlkshwlyHacker | 2026
 v6.2: HTML escaping (root-cause), image fallback via @napi-rs/canvas,
       single-fire shutdown, PID single-instance, Discord EDIT-not-resend
 */
+// ← FIX: تحميل .env إذا كان موجود (لضمان وصول البوت للـ secrets كـ subprocess)
+try {
+  const envPath = require('path').join(__dirname, '.env');
+  if (require('fs').existsSync(envPath)) {
+    require('fs').readFileSync(envPath, 'utf8').split('\n').forEach(line => {
+      const m = line.match(/^([^#=]+)=(.*)$/);
+      if (m && m[1].trim() && !process.env[m[1].trim()]) {
+        process.env[m[1].trim()] = m[2].trim();
+      }
+    });
+  }
+} catch (_) {}
 const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, AttachmentBuilder } = require('discord.js');
 const { TelegramClient, Api } = require('telegram');
 const { StringSession } = require('telegram/sessions');
@@ -38,7 +50,6 @@ const Logger = {
 const BOT_TOKEN        = process.env.DISCORD_BOT_TOKEN;
 const CHANNEL_ID       = process.env.DISCORD_CHANNEL_ID;
 const WEBHOOK_URL      = process.env.DISCORD_WEBHOOK_URL;
-const LOCK_FILE        = 'C:\session_active.lock';
 const PID_FILE         = 'C:\Users\Public\bot.pid';
 const BACKUP_SCRIPT    = 'C:\Users\Public\backup.ps1';
 const TG_SESSION_FILE  = 'C:\Users\Public\tg_session.dat';
@@ -54,9 +65,10 @@ const WORKFLOW_START       = Date.now();
 const WORKFLOW_TIMEOUT     = 360 * 60 * 1000;
 const ALERT_THRESHOLDS     = [10 * 60 * 1000, 5 * 60 * 1000, 1 * 60 * 1000];
 const firedAlerts          = new Set();
-if (!BOT_TOKEN || !CHANNEL_ID) {
-  Logger.error('FATAL: Missing Discord credentials');
-  process.exit(1);
+// ← FIX: Discord أصبح اختياري — البوت يعمل بدونه ويكتفي بـ Telegram
+const DISCORD_ENABLED = !!(BOT_TOKEN && CHANNEL_ID);
+if (!DISCORD_ENABLED) {
+  Logger.warn('Discord credentials missing — running in Telegram-only mode');
 }
 // ═══════════════════════════════════════════════════════
 //  v6.2 SINGLE-INSTANCE GUARD (PID)
@@ -645,7 +657,7 @@ function buildButtons() {
   ];
 }
 async function postStatus() {
-  if (!controlChannel) return;
+  if (!controlChannel || !DISCORD_ENABLED) return;
   const payload = { embeds: [buildEmbed()], components: buildButtons() };
   try {
     if (lastStatusMsg) {
@@ -853,7 +865,11 @@ client.once('ready', async function () {
   }
   await initializeTelegramAndNotify();
   setInterval(function () { checkTimeoutAlerts().catch(function () {}); }, 30000);
-  setInterval(function () { postStatus().catch(function () {}); sendTelegramPanel().catch(function () {}); }, 30000);
+  // ← FIX: postStatus يعمل فقط إذا Discord متصل
+  setInterval(function () {
+    if (controlChannel) postStatus().catch(function () {});
+    sendTelegramPanel().catch(function () {});
+  }, 30000);
 });
 client.on('interactionCreate', async function (i) {
   if (!i.isButton()) return;
@@ -943,8 +959,6 @@ process.on('uncaughtException',  e => Logger.error('Uncaught exception', { msg: 
 async function shutdown(reason) {
   if (shuttingDown) return;
   shuttingDown = true;
-  // ← أوقف فحص الـ lock فوراً لمنع تكرار رسائل "Bot stopped"
-  if (typeof lockCheckInterval !== 'undefined') clearInterval(lockCheckInterval);
   Logger.info('Shutdown initiated', { reason });
   if (currentProc && currentProc.pid) killProcessTree(currentProc.pid);
   await Promise.race([
@@ -958,14 +972,42 @@ async function shutdown(reason) {
 }
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT',  () => shutdown('SIGINT'));
-const lockCheckInterval = setInterval(() => {
-  if (shuttingDown) { clearInterval(lockCheckInterval); return; }
-  if (!fs.existsSync(LOCK_FILE)) {
-    clearInterval(lockCheckInterval); // ← أوقف الـ interval فوراً قبل shutdown لمنع التكرار
-    shutdown('Lock removed');
+
+// ← FIX: تشغيل Telegram فوراً بدون انتظار Discord
+async function startTelegramStandalone() {
+  if (!TELEGRAM_API_ID || !TELEGRAM_API_HASH || !TELEGRAM_BOT_TOKEN || !TELEGRAM_CHANNEL) {
+    Logger.warn('Telegram credentials also missing — nothing to do');
+    return;
   }
-}, 5000);
-client.login(BOT_TOKEN).catch(e => {
-  Logger.error('Discord login failed', { msg: e.message });
-  process.exit(1);
-});
+  Logger.info('Discord disabled — starting Telegram-only mode immediately');
+  tgClient = await initTelegramConnection();
+  if (!tgClient) { Logger.error('TG standalone: connection failed'); return; }
+  tgEntity = await resolveChannelEntity(tgClient);
+  if (!tgEntity) { Logger.error('TG standalone: entity not found'); return; }
+  registerTelegramHandlers();
+  const pid = loadPanelId();
+  if (pid) tgPanelMsg = { id: pid };
+  let sessionInfo = null;
+  try {
+    const infoPath = 'C:\\Users\\Public\\session_info.json';
+    if (fs.existsSync(infoPath)) {
+      sessionInfo = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
+      if (sessionInfo.tailscaleIp) tailscaleIp = sessionInfo.tailscaleIp;
+    }
+  } catch (e) { Logger.warn('Session info parse failed', { msg: e.message }); }
+  const sent = await sendConnectionMessage(sessionInfo);
+  lastResult = sent ? '✅ Connection msg sent' : '❌ Connection msg failed';
+  captureTailscaleStatus();
+  await sendTelegramPanel(true);
+  setInterval(function () { checkTimeoutAlerts().catch(function () {}); }, 30000);
+  setInterval(function () { sendTelegramPanel().catch(function () {}); }, 30000);
+}
+
+if (DISCORD_ENABLED) {
+  client.login(BOT_TOKEN).catch(e => {
+    Logger.error('Discord login failed — falling back to Telegram-only', { msg: e.message });
+    startTelegramStandalone().catch(err => Logger.error('TG standalone failed', { msg: err.message }));
+  });
+} else {
+  startTelegramStandalone().catch(e => Logger.error('TG standalone failed', { msg: e.message }));
+}
