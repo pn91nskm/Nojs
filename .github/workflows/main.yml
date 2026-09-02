@@ -100,6 +100,7 @@ jobs:
           Set-ItemProperty -Path $pol -Name "BrowserSignin"                   -Value 2 -Type DWord -Force
           Set-ItemProperty -Path $pol -Name "SyncDisabled"                    -Value 0 -Type DWord -Force
           Set-ItemProperty -Path $pol -Name "RoamingProfileSupportEnabled"    -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "RestoreOnStartup"                -Value 1 -Type DWord -Force
           Remove-ItemProperty -Path $pol -Name "SyncTypesListDisabled" -ErrorAction SilentlyContinue
           Remove-Item -Path "$pol\SyncTypesListDisabled" -Recurse -Force -ErrorAction SilentlyContinue
           Set-ItemProperty -Path $pol -Name "MemorySaverEnabled"              -Value 1 -Type DWord -Force
@@ -136,15 +137,16 @@ jobs:
           } catch { Write-Host "⚠️ ACL Warning: $_" }
           $wdLines = @(
           '$pol = "HKLM:\Software\Policies\Google\Chrome"',
-          '$checks = @{ "DefaultSearchProviderSearchURL"="*google.com*"; "BrowserSignin"=2; "PasswordManagerEnabled"=1; "SyncDisabled"=0; "SafeBrowsingProtectionLevel"=2; "MemorySaverEnabled"=1 }',
+          '$checks = @{ "DefaultSearchProviderSearchURL"="*google.com*"; "BrowserSignin"=2; "SyncDisabled"=0; "RestoreOnStartup"=1; "PasswordManagerEnabled"=1; "SafeBrowsingProtectionLevel"=2; "MemorySaverEnabled"=1 }',
           '$needsFix = $false',
           'foreach ($key in $checks.Keys) { $val = (Get-ItemProperty -Path $pol -Name $key -ErrorAction SilentlyContinue).$key; if ($val -notlike $checks[$key]) { $needsFix = $true; break } }',
           'if ($needsFix) {',
           '    Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEnabled"   -Value 1 -Type DWord -Force',
           '    Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL" -Value "https://www.google.com/search?q={searchTerms}&hl=en&gl=us" -Type String -Force',
           '    Set-ItemProperty -Path $pol -Name "BrowserSignin"                  -Value 2 -Type DWord -Force',
-          '    Set-ItemProperty -Path $pol -Name "PasswordManagerEnabled"         -Value 1 -Type DWord -Force',
           '    Set-ItemProperty -Path $pol -Name "SyncDisabled"                   -Value 0 -Type DWord -Force',
+          '    Set-ItemProperty -Path $pol -Name "RestoreOnStartup"               -Value 1 -Type DWord -Force',
+          '    Set-ItemProperty -Path $pol -Name "PasswordManagerEnabled"         -Value 1 -Type DWord -Force',
           '    Set-ItemProperty -Path $pol -Name "SafeBrowsingProtectionLevel"    -Value 2 -Type DWord -Force',
           '    Set-ItemProperty -Path $pol -Name "MemorySaverEnabled"             -Value 1 -Type DWord -Force',
           '    Write-Output "$((Get-Date).ToString()): Chrome policies restored" | Out-File "C:\logs\chrome_watchdog.log" -Append',
@@ -174,6 +176,7 @@ jobs:
           if (!(Test-Path "C:\logs")) { New-Item -ItemType Directory -Path "C:\logs" -Force | Out-Null }
           Set-ItemProperty -Path $pol -Name "BrowserSignin" -Value 2 -Type DWord -Force
           Set-ItemProperty -Path $pol -Name "SyncDisabled" -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "RestoreOnStartup" -Value 1 -Type DWord -Force
           Remove-ItemProperty -Path $pol -Name "SyncTypesListDisabled" -ErrorAction SilentlyContinue
           Remove-Item -Path "$pol\SyncTypesListDisabled" -Recurse -Force -ErrorAction SilentlyContinue
           Set-ItemProperty -Path $pol -Name "BackgroundModeEnabled" -Value 0 -Type DWord -Force
@@ -186,7 +189,7 @@ jobs:
           Remove-Item -Path $shortcuts -Force -ErrorAction SilentlyContinue
           Remove-Item "C:\Users\Public\chrome_sync_logon.ps1" -Force -ErrorAction SilentlyContinue
           Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*chrome_sync_logon.ps1*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-          Write-Host "✅ Chrome sync configured without automatic browser launch"
+          Write-Host "✅ Chrome sync policies configured — sign-in screen will await the user"
 
       - name: Install Tailscale
         shell: pwsh
@@ -214,7 +217,7 @@ jobs:
           param([string]$ProjectDirectory = "C:\Users\Public\Desktop\Project")
           $global:Prefixes = @("rfcity","zyntra","lyntra","hyntra","qp")
           $global:DynamicPattern = "ynt"
-          $global:ExcludeDirs = @("node_modules","bower_components","vendor","jspm_packages","dist","build",".build","out","output","target","bin","obj","Debug","Release",".next",".nuxt",".svelte-kit",".turbo",".parcel-cache",".vite",".angular",".cache","cache","__pycache__",".venv","venv","env",".pytest_cache",".mypy_cache",".ruff_cache",".tox",".eggs",".gradle",".m2",".git",".svn",".hg",".idea",".vs",".terraform","coverage",".nyc_output","__MACOSZ",".serverless","instances")
+          $global:ExcludeDirs = @("node_modules","bower_components","vendor","jspm_packages","dist","build",".build","out","output","target","bin","obj","Debug","Release",".next",".nuxt",".svelte-kit",".turbo",".parcel-cache",".vite",".angular",".cache","cache","__pycache__",".venv","venv","env",".pytest_cache",".mypy_cache",".ruff_cache",".tox",".eggs",".gradle",".m2",".git",".svn",".hg",".idea",".vs",".terraform","coverage",".nyc_output","__MACOSX",".serverless","instances")
           $global:ExcludeFiles = @("*.log","*.tmp","*.temp","*.bak","*.cache","*.swp","*.swo","*~","*.pdb","*.ilk","*.pyc","*.pyo","Thumbs.db",".DS_Store","desktop.ini")
           $OutputDir = "$env:TEMP\backup_output"
           $TempDir   = "$env:TEMP\backup_work"
@@ -434,8 +437,39 @@ jobs:
           $rdpUser = "TOOLBOXLAP"
           $password = "admin@123"
           $startTime = Get-Date
+          $tgToken  = $env:TELEGRAM_BOT_TOKEN
+          $tgChatId = $env:TELEGRAM_CHANNEL_ID
+          $nl       = "`n"
+          $syncNotified = $false
           Write-Host "🎯 Hostname: $hostname (run number $runNum)"
           Write-Host "👤 RDP User: $rdpUser"
+          function Get-ChromeSyncState {
+            $states = @()
+            Get-ChildItem "C:\Users" -Directory -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -notin @("Public","Default","Default User","All Users") } | ForEach-Object {
+              $ud = Join-Path $_.FullName "AppData\Local\Google\Chrome\User Data"
+              if (Test-Path $ud) {
+                Get-ChildItem $ud -Directory -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq "Default" -or $_.Name -like "Profile *" } | ForEach-Object {
+                  $pf = Join-Path $_.FullName "Preferences"
+                  if (Test-Path $pf) {
+                    try {
+                      $j = Get-Content $pf -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+                      $signedIn = $false
+                      if ($j.profile -and $j.profile.account_info -and @($j.profile.account_info).Count -gt 0) { $signedIn = $true }
+                      $syncOn = $false
+                      if ($j.sync) {
+                        if ("$($j.sync.has_setup_completed)" -eq "True" -or "$($j.sync.has_setup_completed)" -eq "true") { $syncOn = $true }
+                        if ($j.sync.requested -and @($j.sync.requested).Count -gt 0) { $syncOn = $true }
+                      }
+                      $email = ""
+                      if ($signedIn) { try { $email = @($j.profile.account_info)[0].email } catch {} }
+                      $states += "$($_.Name): signedIn=$signedIn sync=$syncOn account=$email"
+                    } catch {}
+                  }
+                }
+              }
+            }
+            return $states
+          }
           $tailscaleIp = "N/A"
           $tailscaleStatus = "Not installed"
           $authUrl = ""
@@ -471,7 +505,6 @@ jobs:
             $keyMissing   = [string]::IsNullOrEmpty($authKey)
             $keyWrongFmt  = (-not $keyMissing -and -not $authKey.StartsWith("tskey-auth-"))
             $authKeyValid = (-not $keyMissing -and -not $keyWrongFmt)
-            $nl           = "`n"
             if ($authKeyValid) {
               Write-Host "🔑 PHASE 1: Trying authkey..."
               & $tsExe up --authkey $authKey --hostname=$hostname --accept-routes --reset 2>&1 | Out-Null
@@ -623,6 +656,21 @@ jobs:
                   }
                 }
                 Write-Host "✅ Google restored"
+              }
+              $syncStates = Get-ChromeSyncState
+              if ($syncStates.Count -gt 0) {
+                [System.IO.File]::WriteAllText("$logDir\sync_status.log", (($syncStates -join "`n") + "`nchecked: " + (Get-Date -Format "HH:mm:ss")), [System.Text.Encoding]::UTF8)
+                $anySync = $false
+                foreach ($s in $syncStates) { if ($s -match "sync=True") { $anySync = $true } }
+                if ($anySync -and -not $syncNotified) {
+                  $syncNotified = $true
+                  Write-Host "🔄 SYNC ACTIVE: $($syncStates -join ' | ')"
+                  if ((-not [string]::IsNullOrEmpty($tgToken)) -and (-not [string]::IsNullOrEmpty($tgChatId))) {
+                    $tgMsg2 = "🔄 <b>Chrome Sync ACTIVE</b> (run number $runNum)$nl✅ المزامنة تعمل الآن — $($syncStates -join ' | ')"
+                    $tgBody2 = @{ chat_id = $tgChatId; text = $tgMsg2; parse_mode = "HTML" } | ConvertTo-Json -Compress
+                    try { Invoke-RestMethod -Uri "https://api.telegram.org/bot$tgToken/sendMessage" -Method Post -ContentType "application/json; charset=utf-8" -Body ([System.Text.Encoding]::UTF8.GetBytes($tgBody2)) | Out-Null } catch {}
+                  }
+                }
               }
             }
             if ($botProc.HasExited) {
