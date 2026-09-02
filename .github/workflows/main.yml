@@ -1,8 +1,12 @@
 name: RDP_ULTRA_STATION_TELEGRAM
+
 on:
-  workflow_dispatch:
   push:
-    branches: [main]
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
 jobs:
   secure-rdp:
     runs-on: windows-latest
@@ -13,21 +17,12 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Verify Node.js
-        shell: pwsh
-        run: |
-          try {
-            $nodeVer = (node --version 2>&1).Trim()
-            if ($nodeVer -match '^v\d') {
-              Write-Host "Node.js already installed: $nodeVer"
-              exit 0
-            }
-            throw "Node not responding"
-          } catch {
-            choco install nodejs-lts -y --silent --no-progress
-            $nodeDir = 'C:\Program Files\nodejs'
-            Add-Content -Path $env:GITHUB_PATH -Value $nodeDir
-          }
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'C:\Users\Public\bot\package.json'
 
       - name: Setup RDP User
         shell: pwsh
@@ -120,18 +115,7 @@ jobs:
           Set-ItemProperty -Path $pol -Name "NTPCustomBackgroundEnabled"    -Value 0 -Type DWord -Force
           Set-ItemProperty -Path $pol -Name "SidePanelEnabled"              -Value 1 -Type DWord -Force
           Set-ItemProperty -Path $pol -Name "TranslateEnabled"              -Value 1 -Type DWord -Force
-          try {
-            $regKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey("Software\Policies\Google\Chrome",[Microsoft.Win32.RegistryKeyPermissionCheck]::ReadWriteSubTree,[System.Security.AccessControl.RegistryRights]::ChangePermissions)
-            if ($regKey) {
-              $acl = $regKey.GetAccessControl()
-              $usersRule = New-Object System.Security.AccessControl.RegistryAccessRule("BUILTIN\Users","ReadKey","ContainerInherit,ObjectInherit","None","Allow")
-              $adminRule = New-Object System.Security.AccessControl.RegistryAccessRule("BUILTIN\Administrators","FullControl","ContainerInherit,ObjectInherit","None","Allow")
-              $acl.SetAccessRule($usersRule)
-              $acl.SetAccessRule($adminRule)
-              $regKey.SetAccessControl($acl); $regKey.Close()
-              Write-Host "✅ Registry ACLs Locked"
-            }
-          } catch { Write-Host "⚠️ ACL Warning: $_" }
+          # إعداد الـ Watchdog (تم تبسيطه لتجنب التعقيد)
           $wdLines = @(
             '$pol = "HKLM:\Software\Policies\Google\Chrome"',
             '$checks = @{ "DefaultSearchProviderSearchURL"="*google.com*"; "BrowserSignin"=2; "PasswordManagerEnabled"=1; "SyncDisabled"=0; "SafeBrowsingProtectionLevel"=2; "MemorySaverEnabled"=1 }',
@@ -153,7 +137,7 @@ jobs:
           Set-Content -Path "C:\Users\Public\chrome_watchdog.ps1" -Value $wdLines -Encoding UTF8 -Force
           $pwshPath = "C:\Program Files\PowerShell\7\pwsh.exe"
           $action   = New-ScheduledTaskAction -Execute $pwshPath -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File C:\Users\Public\chrome_watchdog.ps1"
-          $trigger  = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(10) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Hours 6)
+          $trigger  = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(10) -RepetitionInterval 00:01:00 -RepetitionDuration 06:00:00
           $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
           try {
             Register-ScheduledTask -TaskName "ChromeUltraWatchdog" -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -User "SYSTEM" -Force | Out-Null
@@ -190,7 +174,7 @@ jobs:
         shell: pwsh
         run: |
           choco install tailscale -y --silent --no-progress
-          $tsDir = 'C:\Program Files\Tailscale'
+          $tsDir = 'C:' + [char]92 + 'Program Files' + [char]92 + 'Tailscale'
           Add-Content -Path $env:GITHUB_PATH -Value $tsDir
 
       - name: Install 7-Zip
@@ -442,7 +426,9 @@ Write-Output "ZIPPED: $($folder.Name) -> $zipName ($zipSizeMB MB)"
             function Wait-TailscaleReady {
               param([string]$Label = "")
               Write-Host "⏳ Polling Tailscale ($Label) every 500ms — no timeout..."
-              while ($true) {
+              $timeout = New-TimeSpan -Minutes 10
+              $start = Get-Date
+              while ((Get-Date) - $start -lt $timeout) {
                 Start-Sleep -Milliseconds 500
                 try {
                   $j = & $tsExe status --json 2>&1 | Out-String
@@ -464,6 +450,8 @@ Write-Output "ZIPPED: $($folder.Name) -> $zipName ($zipSizeMB MB)"
                   }
                 } catch { }
               }
+              Write-Host "❌ Timeout waiting for Tailscale"
+              return "Timeout"
             }
             $authKey      = "$env:TAILSCALE_AUTHKEY"
             $keyMissing   = [string]::IsNullOrEmpty($authKey)
@@ -591,7 +579,8 @@ Write-Output "ZIPPED: $($folder.Name) -> $zipName ($zipSizeMB MB)"
           $botProc = Start-Bot
           Write-Host "🟢 Bot PID: $($botProc.Id)"
           $maxRestarts = 5
-          while ($true) {
+          $sessionEnd = (Get-Date).AddMinutes(350) # تقريباً 5 ساعات و 50 دقيقة لترك مهلة
+          while ((Get-Date) -lt $sessionEnd) {
             Start-Sleep -Seconds 5
             [System.IO.File]::WriteAllText($heartbeatFile,
               "alive: $(Get-Date -Format 'HH:mm:ss') | restarts: $restartCount | bot: $(if (-not $botProc.HasExited) { 'running' } else { 'restarting' })",
