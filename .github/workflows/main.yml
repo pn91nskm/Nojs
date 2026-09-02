@@ -1,4 +1,3 @@
-
 name: RDP_ULTRA_STATION_TELEGRAM
 on:
   workflow_dispatch:
@@ -16,38 +15,39 @@ jobs:
         shell: pwsh
         run: |
           try {
-              $nodeVer = (node --version 2>&1).Trim()
-              $npmVer = (npm --version 2>&1).Trim()
-              if ($nodeVer -match '^v\d') {
-                  Write-Host "Node.js already installed: $nodeVer"
-                  exit 0
-              }
-              throw "Node not responding"
+            $nodeVer = (node --version 2>&1).Trim()
+            $npmVer = (npm --version 2>&1).Trim()
+            if ($nodeVer -match '^v\d') {
+              Write-Host "Node.js already installed: $nodeVer"
+              exit 0
+            }
+            throw "Node not responding"
           } catch {
-              choco install nodejs-lts -y --silent --no-progress
-              echo "C:\Program Files\nodejs" >> $env:GITHUB_PATH
+            choco install nodejs-lts -y --silent --no-progress
+            echo "C:\Program Files\nodejs" >> $env:GITHUB_PATH
           }
 
-      - name: Setup RDP User (Sequential + Password in Message)
+      - name: Setup RDP User
         shell: pwsh
         run: |
           $password = "admin@123"
           $runNum = $env:RUN_NUMBER
           if ([string]::IsNullOrEmpty($runNum)) { $runNum = "1" }
           $username = "TOOLBOXLAP"
-          Write-Host "🎯 RDP Username: $username (run #$runNum)"
+          Write-Host "🎯 RDP Username: $username (run number $runNum)"
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
           if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
-              New-LocalUser -Name $username -Password $securePass -AccountNeverExpires | Out-Null
+            New-LocalUser -Name $username -Password $securePass -AccountNeverExpires | Out-Null
           }
           Add-LocalGroupMember -Group "Administrators" -Member $username -ErrorAction SilentlyContinue
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username -ErrorAction SilentlyContinue
           $dirs = @("C:\Users\Public\Desktop","C:\Users\Public\Desktop\Project","C:\Users\Public\Desktop\Apps")
           foreach ($dir in $dirs) {
-              if (!(Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+            if (!(Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
           }
 
       - name: Enable RDP
+        shell: pwsh
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
@@ -60,99 +60,100 @@ jobs:
           $chromePath = "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe"
           if (!(Test-Path $chromePath)) { $chromePath = "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe" }
           try {
-              if (!(Test-Path $chromePath)) { throw "Chrome غير مثبت" }
-              $xmlContent = '<?xml version="1.0" encoding="UTF-8"?><DefaultAssociations><Association Identifier=".htm" ProgId="ChromeHTML" ApplicationName="Google Chrome" /><Association Identifier=".html" ProgId="ChromeHTML" ApplicationName="Google Chrome" /><Association Identifier="http" ProgId="ChromeHTML" ApplicationName="Google Chrome" /><Association Identifier="https" ProgId="ChromeHTML" ApplicationName="Google Chrome" /></DefaultAssociations>'
-              $xmlContent | Set-Content -Path $xmlPath -Encoding UTF8 -Force
-              Start-Process dism.exe -ArgumentList "/Online /Import-DefaultAppAssociations:$xmlPath" -Wait -NoNewWindow
+            if (!(Test-Path $chromePath)) { throw "Chrome غير مثبت" }
+            $xmlContent = '<?xml version="1.0" encoding="UTF-8"?><DefaultAssociations><Association Identifier=".htm" ProgId="ChromeHTML" ApplicationName="Google Chrome" /><Association Identifier=".html" ProgId="ChromeHTML" ApplicationName="Google Chrome" /><Association Identifier="http" ProgId="ChromeHTML" ApplicationName="Google Chrome" /><Association Identifier="https" ProgId="ChromeHTML" ApplicationName="Google Chrome" /></DefaultAssociations>'
+            $xmlContent | Set-Content -Path $xmlPath -Encoding UTF8 -Force
+            Start-Process dism.exe -ArgumentList "/Online /Import-DefaultAppAssociations:$xmlPath" -Wait -NoNewWindow
           } catch {}
           if (Test-Path $xmlPath) { Remove-Item $xmlPath -Force }
 
-      # ═══════════════════════════════════════════════════════════
-      #  🚀 ULTRA CHROME ENGINE: Sync + Passwords + Performance
-      #  Developed by AlkshwlyHacker | v2026.Ultimate
-      # ═══════════════════════════════════════════════════════════
-      - name: Deploy Ultra Chrome Engine (Sync + Passwords + Security)
+      - name: Deploy Ultra Chrome Engine
         shell: pwsh
         run: |
           $pol = "HKLM:\Software\Policies\Google\Chrome"
           $recPol = "HKLM:\Software\Policies\Google\Chrome\Recommended"
           @($pol, $recPol, "$pol\ExtensionInstallForcelist", "$pol\URLBlocklist") | ForEach-Object {
-              if (!(Test-Path $_)) { New-Item -Path $_ -Force | Out-Null }
+            if (!(Test-Path $_)) { New-Item -Path $_ -Force | Out-Null }
           }
-          Write-Host "🔧 [1/6] Configuring Core Search & Browser Identity..."
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEnabled"    -Value 1              -Type DWord  -Force
+          if (!(Test-Path "C:\logs")) { New-Item -ItemType Directory -Path "C:\logs" -Force | Out-Null }
+          Write-Host "🔧 Configuring Core Search & Browser Identity..."
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEnabled"    -Value 1 -Type DWord -Force
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderName"       -Value "Google Secure" -Type String -Force
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderKeyword"    -Value "g"            -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderKeyword"    -Value "g" -Type String -Force
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL"  -Value "https://www.google.com/search?q={searchTerms}&hl=en&gl=us" -Type String -Force
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSuggestURL" -Value "https://www.google.com/complete/search?client=chrome&q={searchTerms}" -Type String -Force
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderIconURL"    -Value "https://www.google.com/favicon.ico" -Type String -Force
           Set-ItemProperty -Path $pol -Name "DefaultSearchProviderNewTabURL"  -Value "https://www.google.com" -Type String -Force
-          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEncodings"  -Value "UTF-8"        -Type String -Force
+          Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEncodings"  -Value "UTF-8" -Type String -Force
           Set-ItemProperty -Path $pol -Name "HomepageLocation"                -Value "https://www.google.com" -Type String -Force
           Set-ItemProperty -Path $pol -Name "NewTabPageLocation"              -Value "https://www.google.com" -Type String -Force
-          Set-ItemProperty -Path $pol -Name "ShowHomeButton"                  -Value 1              -Type DWord  -Force
-          Write-Host "🔐 [2/6] Hardening Password Manager & Autofill..."
-          Set-ItemProperty -Path $pol -Name "PasswordManagerEnabled"          -Value 1 -Type DWord  -Force
-          Set-ItemProperty -Path $pol -Name "PasswordLeakDetectionEnabled"    -Value 1 -Type DWord  -Force
-          Set-ItemProperty -Path $pol -Name "EnhancedProtectionModeEnabled"   -Value 1 -Type DWord  -Force
-          Set-ItemProperty -Path $pol -Name "AutofillAddressEnabled"          -Value 1 -Type DWord  -Force
-          Set-ItemProperty -Path $pol -Name "AutofillCreditCardEnabled"       -Value 1 -Type DWord  -Force
-          Set-ItemProperty -Path $pol -Name "AutoFillPasswordsEnabled"        -Value 1 -Type DWord  -Force
-          Set-ItemProperty -Path $pol -Name "BrowserSignin"                   -Value 1 -Type DWord  -Force
-          Set-ItemProperty -Path $pol -Name "SyncDisabled"                    -Value 0 -Type DWord  -Force
-          Set-ItemProperty -Path $pol -Name "RoamingProfileSupportEnabled"    -Value 1 -Type DWord  -Force
-          Set-ItemProperty -Path $pol -Name "SyncTypesListDisabled"           -Value "" -Type String -Force
-          Write-Host "⚡ [3/6] Performance & Memory Optimization..."
-          Set-ItemProperty -Path $pol -Name "MemorySaverEnabled"              -Value 1         -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "HighEfficiencyModeEnabled"       -Value 1         -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "BackgroundModeEnabled"           -Value 0         -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "StartupBoostEnabled"             -Value 0         -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "HardwareAccelerationModeEnabled" -Value 1         -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "ShowHomeButton"                  -Value 1 -Type DWord -Force
+          Write-Host "🔐 Hardening Password Manager & Autofill..."
+          Set-ItemProperty -Path $pol -Name "PasswordManagerEnabled"          -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "PasswordLeakDetectionEnabled"    -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "EnhancedProtectionModeEnabled"   -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "AutofillAddressEnabled"          -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "AutofillCreditCardEnabled"       -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "AutoFillPasswordsEnabled"        -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "BrowserSignin"                   -Value 2 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "SyncDisabled"                    -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "RoamingProfileSupportEnabled"    -Value 1 -Type DWord -Force
+          Remove-ItemProperty -Path $pol -Name "SyncTypesListDisabled" -ErrorAction SilentlyContinue
+          Remove-Item -Path "$pol\SyncTypesListDisabled" -Recurse -Force -ErrorAction SilentlyContinue
+          Write-Host "⚡ Performance & Memory Optimization..."
+          Set-ItemProperty -Path $pol -Name "MemorySaverEnabled"              -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "HighEfficiencyModeEnabled"       -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "BackgroundModeEnabled"           -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "StartupBoostEnabled"             -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "HardwareAccelerationModeEnabled" -Value 1 -Type DWord -Force
           Set-ItemProperty -Path $pol -Name "DiskCacheSize"                   -Value 268435456 -Type QWord -Force
-          Set-ItemProperty -Path $pol -Name "MediaRouterCastAllowAllIPs"      -Value 0         -Type DWord -Force
-          Write-Host "🛡️ [4/6] Advanced Security & Privacy Layer..."
-          Set-ItemProperty -Path $pol -Name "SafeBrowsingProtectionLevel"        -Value 2        -Type DWord  -Force
-          Set-ItemProperty -Path $pol -Name "DownloadRestrictions"               -Value 1        -Type DWord  -Force
-          Set-ItemProperty -Path $pol -Name "JavaScriptBlockedForUrls"           -Value ""       -Type String -Force
-          Set-ItemProperty -Path $pol -Name "IncognitoModeAvailability"          -Value 0        -Type DWord  -Force
-          Set-ItemProperty -Path $pol -Name "DeveloperToolsAvailability"         -Value 1        -Type DWord  -Force
-          Set-ItemProperty -Path $pol -Name "RemoteAccessHostAllowClientPairing" -Value 0        -Type DWord  -Force
+          Set-ItemProperty -Path $pol -Name "MediaRouterCastAllowAllIPs"      -Value 0 -Type DWord -Force
+          Write-Host "🛡️ Advanced Security & Privacy Layer..."
+          Set-ItemProperty -Path $pol -Name "SafeBrowsingProtectionLevel"        -Value 2 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "DownloadRestrictions"               -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "JavaScriptBlockedForUrls"           -Value "" -Type String -Force
+          Set-ItemProperty -Path $pol -Name "IncognitoModeAvailability"          -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "DeveloperToolsAvailability"         -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "RemoteAccessHostAllowClientPairing" -Value 0 -Type DWord -Force
           Set-ItemProperty -Path $pol -Name "DnsOverHttpsMode"                   -Value "secure" -Type String -Force
-          Set-ItemProperty -Path $pol -Name "HttpsOnlyMode"                      -Value "allowed"-Type String -Force
-          Write-Host "🧹 [5/6] UI Cleanup & Anti-Bloatware..."
+          Set-ItemProperty -Path $pol -Name "HttpsOnlyMode"                      -Value "allowed" -Type String -Force
+          Write-Host "🧹 UI Cleanup & Anti-Bloatware..."
           Set-ItemProperty -Path $pol -Name "PromotionalTabsEnabled"        -Value 0 -Type DWord -Force
           Set-ItemProperty -Path $pol -Name "WelcomePageOnOSUpgradeEnabled" -Value 0 -Type DWord -Force
           Set-ItemProperty -Path $pol -Name "HideWebStoreIcon"              -Value 0 -Type DWord -Force
           Set-ItemProperty -Path $pol -Name "NTPCustomBackgroundEnabled"    -Value 0 -Type DWord -Force
           Set-ItemProperty -Path $pol -Name "SidePanelEnabled"              -Value 1 -Type DWord -Force
           Set-ItemProperty -Path $pol -Name "TranslateEnabled"              -Value 1 -Type DWord -Force
-          Write-Host "🔒 [6/6] Registry ACL Protection & Watchdog Deployment..."
+          Write-Host "🔒 Registry ACL Protection & Watchdog Deployment..."
           try {
-              $regKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey("Software\Policies\Google\Chrome",[Microsoft.Win32.RegistryKeyPermissionCheck]::ReadWriteSubTree,[System.Security.AccessControl.RegistryRights]::ChangePermissions)
-              if ($regKey) {
-                  $acl = $regKey.GetAccessControl()
-                  $usersRule = New-Object System.Security.AccessControl.RegistryAccessRule("BUILTIN\Users","ReadKey","ContainerInherit,ObjectInherit","None","Allow")
-                  $adminRule = New-Object System.Security.AccessControl.RegistryAccessRule("BUILTIN\Administrators","FullControl","ContainerInherit,ObjectInherit","None","Allow")
-                  $acl.SetAccessRule($usersRule)
-                  $acl.SetAccessRule($adminRule)
-                  $regKey.SetAccessControl($acl); $regKey.Close()
-                  Write-Host "✅ Registry ACLs Locked (Admins Only)"
-              }
+            $regKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey("Software\Policies\Google\Chrome",[Microsoft.Win32.RegistryKeyPermissionCheck]::ReadWriteSubTree,[System.Security.AccessControl.RegistryRights]::ChangePermissions)
+            if ($regKey) {
+              $acl = $regKey.GetAccessControl()
+              $usersRule = New-Object System.Security.AccessControl.RegistryAccessRule("BUILTIN\Users","ReadKey","ContainerInherit,ObjectInherit","None","Allow")
+              $adminRule = New-Object System.Security.AccessControl.RegistryAccessRule("BUILTIN\Administrators","FullControl","ContainerInherit,ObjectInherit","None","Allow")
+              $acl.SetAccessRule($usersRule)
+              $acl.SetAccessRule($adminRule)
+              $regKey.SetAccessControl($acl); $regKey.Close()
+              Write-Host "✅ Registry ACLs Locked"
+            }
           } catch { Write-Host "⚠️ ACL Warning: $_" }
           $wdLines = @(
-              '$pol = "HKLM:\Software\Policies\Google\Chrome"',
-              '$checks = @{ "DefaultSearchProviderSearchURL"="*google.com*"; "PasswordManagerEnabled"=1; "SyncDisabled"=0; "SafeBrowsingProtectionLevel"=2; "MemorySaverEnabled"=1 }',
-              '$needsFix = $false',
-              'foreach ($key in $checks.Keys) { $val = (Get-ItemProperty -Path $pol -Name $key -ErrorAction SilentlyContinue).$key; if ($val -notlike $checks[$key]) { $needsFix = $true; break } }',
-              'if ($needsFix) {',
-              '    Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEnabled"   -Value 1 -Type DWord -Force',
-              '    Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL" -Value "https://www.google.com/search?q={searchTerms}&hl=en&gl=us" -Type String -Force',
-              '    Set-ItemProperty -Path $pol -Name "PasswordManagerEnabled"         -Value 1 -Type DWord -Force',
-              '    Set-ItemProperty -Path $pol -Name "SyncDisabled"                   -Value 0 -Type DWord -Force',
-              '    Set-ItemProperty -Path $pol -Name "SafeBrowsingProtectionLevel"    -Value 2 -Type DWord -Force',
-              '    Set-ItemProperty -Path $pol -Name "MemorySaverEnabled"             -Value 1 -Type DWord -Force',
-              '    Write-Output "$((Get-Date).ToString()): Chrome policies restored" | Out-File "C:\logs\chrome_watchdog.log" -Append',
-              '}'
+            '$pol = "HKLM:\Software\Policies\Google\Chrome"',
+            '$checks = @{ "DefaultSearchProviderSearchURL"="*google.com*"; "BrowserSignin"=2; "PasswordManagerEnabled"=1; "SyncDisabled"=0; "SafeBrowsingProtectionLevel"=2; "MemorySaverEnabled"=1 }',
+            '$needsFix = $false',
+            'foreach ($key in $checks.Keys) { $val = (Get-ItemProperty -Path $pol -Name $key -ErrorAction SilentlyContinue).$key; if ($val -notlike $checks[$key]) { $needsFix = $true; break } }',
+            'if ($needsFix) {',
+            '    Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEnabled"   -Value 1 -Type DWord -Force',
+            '    Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL" -Value "https://www.google.com/search?q={searchTerms}&hl=en&gl=us" -Type String -Force',
+            '    Set-ItemProperty -Path $pol -Name "BrowserSignin"                  -Value 2 -Type DWord -Force',
+            '    Set-ItemProperty -Path $pol -Name "PasswordManagerEnabled"         -Value 1 -Type DWord -Force',
+            '    Set-ItemProperty -Path $pol -Name "SyncDisabled"                   -Value 0 -Type DWord -Force',
+            '    Set-ItemProperty -Path $pol -Name "SafeBrowsingProtectionLevel"    -Value 2 -Type DWord -Force',
+            '    Set-ItemProperty -Path $pol -Name "MemorySaverEnabled"             -Value 1 -Type DWord -Force',
+            '    Write-Output "$((Get-Date).ToString()): Chrome policies restored" | Out-File "C:\logs\chrome_watchdog.log" -Append',
+            '}',
+            'Remove-ItemProperty -Path $pol -Name "SyncTypesListDisabled" -ErrorAction SilentlyContinue',
+            'Remove-Item -Path "$pol\SyncTypesListDisabled" -Recurse -Force -ErrorAction SilentlyContinue'
           )
           Set-Content -Path "C:\Users\Public\chrome_watchdog.ps1" -Value $wdLines -Encoding UTF8 -Force
           $pwshPath = "C:\Program Files\PowerShell\7\pwsh.exe"
@@ -160,278 +161,150 @@ jobs:
           $trigger  = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(10) -RepetitionInterval 00:01:00 -RepetitionDuration 06:00:00
           $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
           try {
-              Register-ScheduledTask -TaskName "ChromeUltraWatchdog" -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -User "SYSTEM" -Force | Out-Null
-              Write-Host "✅ ChromeUltraWatchdog Registered Successfully (Interval: 1 min)"
+            Register-ScheduledTask -TaskName "ChromeUltraWatchdog" -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -User "SYSTEM" -Force | Out-Null
+            Write-Host "✅ ChromeUltraWatchdog Registered Successfully"
           } catch {
-              Write-Host "❌ Failed to register Watchdog: $_"
-              exit 1
+            Write-Host "❌ Failed to register Watchdog: $_"
+            exit 1
           }
           Write-Host "🎉 ULTRA CHROME ENGINE DEPLOYED SUCCESSFULLY"
 
-      # ═══════════════════════════════════════════════════════════
-#  🆕 v7.0: إصلاح - Chrome يفتح يدوياً + نافذة مزامنة رسمية
-#  مرجع: https://chromeenterprise.google/policies/
-# ═══════════════════════════════════════════════════════════
-- name: Fix Chrome - Manual Launch + Official Sync Window (v7.0)
-  shell: pwsh
-  run: |
-    # ─────────────────────────────────────────────
-    # 1) تنظيف كل الآليات القديمة التي تفتح Chrome تلقائياً
-    # ─────────────────────────────────────────────
-    Write-Host "🧹 [1/5] Removing old auto-launch mechanisms..."
-
-    # حذف Scheduled Tasks القديمة
-    @("ChromeSyncOnLogon", "ChromeUltraWatchdog") | ForEach-Object {
-      try {
-        Unregister-ScheduledTask -TaskName $_ -Confirm:$false -ErrorAction SilentlyContinue
-        Write-Host "   ✅ Removed task: $_"
-      } catch {}
-    }
-
-    # حذف Startup Shortcut (سبب الفتح المتكرر عند كل logon)
-    $startupDir = "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp"
-    Get-ChildItem $startupDir -Filter "ChromeSync*" -ErrorAction SilentlyContinue |
-      ForEach-Object { Remove-Item $_.FullName -Force; Write-Host "   ✅ Removed startup: $($_.Name)" }
-
-    # حذف السكربتات القديمة
-    @("C:\Users\Public\chrome_sync_logon.ps1", "C:\Users\Public\chrome_watchdog.ps1") |
-      ForEach-Object { if (Test-Path $_) { Remove-Item $_ -Force } }
-
-    # قتل أي عمليات Chrome/Sync قديمة
-    Get-Process -Name "chrome" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-
-    # ─────────────────────────────────────────────
-    # 2) ضبط Policies وفقاً لوثائق Google الرسمية
-    #    BrowserSignin=1 → يسمح بتسجيل الدخول (لا يُجبر) → تظهر نافذة المزامنة
-    #    SyncDisabled=0  → المزامنة مفعّلة
-    # ─────────────────────────────────────────────
-    Write-Host "🔧 [2/5] Applying Google Official Policies for Sync Window..."
-
-    $pol = "HKLM:\Software\Policies\Google\Chrome"
-    if (!(Test-Path $pol)) { New-Item -Path $pol -Force | Out-Null }
-
-    # السياسات الحرجة لإظهار نافذة المزامنة الرسمية
-    Set-ItemProperty -Path $pol -Name "BrowserSignin"                -Value 1        -Type DWord  -Force
-    Set-ItemProperty -Path $pol -Name "SyncDisabled"                 -Value 0        -Type DWord  -Force
-    Set-ItemProperty -Path $pol -Name "SyncTypesListDisabled"        -Value ""       -Type String -Force
-    Set-ItemProperty -Path $pol -Name "RoamingProfileSupportEnabled" -Value 1        -Type DWord  -Force
-    Set-ItemProperty -Path $pol -Name "AllowChromeDataToBeStored"    -Value 1        -Type DWord  -Force  -ErrorAction SilentlyContinue
-    Set-ItemProperty -Path $pol -Name "PasswordManagerEnabled"       -Value 1        -Type DWord  -Force
-    Set-ItemProperty -Path $pol -Name "AutoFillPasswordsEnabled"     -Value 1        -Type DWord  -Force
-
-    # إزالة أي policy تمنع نافذة المزامنة
-    @("ForceBrowserSignin", "ForceGoogleSafeSearch", "SuppressUnsupportedOSWarning") |
-      ForEach-Object { Remove-ItemProperty -Path $pol -Name $_ -ErrorAction SilentlyContinue }
-
-    Write-Host "   ✅ BrowserSignin=1, SyncDisabled=0 (Official Sync Window enabled)"
-
-    # ─────────────────────────────────────────────
-    # 3) سكربت جديد: يفتح Chrome مرة واحدة فقط عند أول logon
-    #    بدون --force-first-run حتى تظهر نافذة المزامنة الرسمية
-    # ─────────────────────────────────────────────
-    Write-Host "📜 [3/5] Creating one-time logon script..."
-
-    $onceScript = @'
-    # Chrome - One-time launch for Official Google Sync Window
-    # No --force-first-run → Google's real sync prompt appears
-    $flagFile = Join-Path $env:LOCALAPPDATA "Google\Chrome\User Data\.sync_prompt_shown"
-    if (Test-Path $flagFile) {
-      Write-Output "$(Get-Date): Sync prompt already shown — skipping auto-launch" | Out-File "C:\logs\chrome_logon.log" -Append
-      exit 0
-    }
-
-    Start-Sleep -Seconds 8  # انتظار استقرار Desktop
-
-    $chrome = "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe"
-    if (!(Test-Path $chrome)) { $chrome = "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe" }
-    if (!(Test-Path $chrome)) { exit 0 }
-
-    # إطلاق Chrome بشكل عادي → Google تعرض نافذة "Turn on sync" الرسمية
-    Start-Process -FilePath $chrome -ArgumentList "--no-restore-session-plan"
-    "$(Get-Date): Chrome launched for sync prompt (user: $env:USERNAME)" | Out-File "C:\logs\chrome_logon.log" -Append
-
-    # إنشاء flag حتى لا يُفتح Chrome تلقائياً مرة أخرى
-    $userDataDir = Join-Path $env:LOCALAPPDATA "Google\Chrome\User Data"
-    if (!(Test-Path $userDataDir)) { New-Item -ItemType Directory -Path $userDataDir -Force | Out-Null }
-    New-Item -ItemType File -Path $flagFile -Force | Out-Null
-    '@
-
-    $scriptPath = "C:\Users\Public\chrome_first_logon.ps1"
-    Set-Content -Path $scriptPath -Value $onceScript -Encoding UTF8 -Force
-
-    # ─────────────────────────────────────────────
-    # 4) Scheduled Task: يعمل مرة واحدة عند logon فقط (ليس reconnect)
-    # ─────────────────────────────────────────────
-    Write-Host "⏰ [4/5] Registering ONE-TIME logon task..."
-
-    $pwshPath = "C:\Program Files\PowerShell\7\pwsh.exe"
-    if (!(Test-Path $pwshPath)) { $pwshPath = "powershell.exe" }
-
-    $action   = New-ScheduledTaskAction -Execute $pwshPath `
-                  -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""
-    $trigger  = New-ScheduledTaskTrigger -AtLogOn -User "TOOLBOXLAP"
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
-                  -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
-
-    try {
-      Register-ScheduledTask -TaskName "ChromeFirstLogonSync" `
-        -Action $action -Trigger $trigger -Settings $settings `
-        -RunLevel Limited -Force | Out-Null
-      Write-Host "   ✅ ChromeFirstLogonSync registered (logon only, no reconnect trigger)"
-    } catch {
-      Write-Host "   ⚠️ Task registration warning: $_"
-    }
-
-    # ─────────────────────────────────────────────
-    # 5) إزالة flag "First Run" حتى لا يخفي نافذة المزامنة
-    #    (Chrome يُنشئه تلقائياً عند أول تشغيل حقيقي)
-    # ─────────────────────────────────────────────
-    Write-Host "🧪 [5/5] Preparing Chrome User Data for clean first-run..."
-
-    $userProfiles = Get-ChildItem "C:\Users" -Directory -Force -ErrorAction SilentlyContinue |
-      Where-Object { $_.Name -notin @("Public","Default","Default User","All Users") }
-
-    foreach ($up in $userProfiles) {
-      $firstRunFile = Join-Path $up.FullName "AppData\Local\Google\Chrome\User Data\First Run"
-      # لا نحذفه — نتركه حتى يكتشف Chrome أنه أول تشغيل ويعرض Sync Window
-      # لكن نحذف أي Local State قديم قد يمنع النافذة
-      $localState = Join-Path $up.FullName "AppData\Local\Google\Chrome\User Data\Local State"
-      if (Test-Path $localState) {
-        try {
-          $json = Get-Content $localState -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json -ErrorAction SilentlyContinue
-          if ($json -and $json.profile -and $json.profile.using_default_avatar -eq $false) {
-            # المستخدم مسجل دخول بالفعل، لا حاجة للتدخل
-          }
-        } catch {}
-      }
-    }
-
-    Write-Host ""
-    Write-Host "╔══════════════════════════════════════════════════╗"
-    Write-Host "║  ✅ v7.0 FIXES APPLIED SUCCESSFULLY              ║"
-    Write-Host "╠══════════════════════════════════════════════════╣"
-    Write-Host "║  • Chrome will NOT auto-open repeatedly          ║"
-    Write-Host "║  • Opens ONCE at first logon only                ║"
-    Write-Host "║  • Official Google Sync Window will appear       ║"
-    Write-Host "║  • User opens Chrome manually after that         ║"
-    Write-Host "║  • SessionSwitch/reconnect hooks REMOVED         ║"
-    Write-Host "╚══════════════════════════════════════════════════╝"
-
+      - name: Configure Chrome Sync Correctly
+        shell: pwsh
+        run: |
+          $pol = "HKLM:\Software\Policies\Google\Chrome"
+          if (!(Test-Path $pol)) { New-Item -Path $pol -Force | Out-Null }
+          if (!(Test-Path "C:\logs")) { New-Item -ItemType Directory -Path "C:\logs" -Force | Out-Null }
+          Set-ItemProperty -Path $pol -Name "BrowserSignin" -Value 2 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "SyncDisabled" -Value 0 -Type DWord -Force
+          Remove-ItemProperty -Path $pol -Name "SyncTypesListDisabled" -ErrorAction SilentlyContinue
+          Remove-Item -Path "$pol\SyncTypesListDisabled" -Recurse -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path $pol -Name "BackgroundModeEnabled" -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "StartupBoostEnabled" -Value 0 -Type DWord -Force
+          Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -like 'ChromeSync*' } | Unregister-ScheduledTask -Confirm:$false -ErrorAction SilentlyContinue
+          $shortcuts = @(
+            "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp\ChromeSyncOnLogon.lnk",
+            (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\StartUp\ChromeSyncOnLogon.lnk")
+          )
+          Remove-Item -Path $shortcuts -Force -ErrorAction SilentlyContinue
+          Remove-Item "C:\Users\Public\chrome_sync_logon.ps1" -Force -ErrorAction SilentlyContinue
+          Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*chrome_sync_logon.ps1*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+          Write-Host "✅ Chrome sync configured without automatic browser launch"
 
       - name: Install Tailscale
+        shell: pwsh
         run: |
           choco install tailscale -y --silent --no-progress
           echo "C:\Program Files\Tailscale" >> $env:GITHUB_PATH
 
-      - name: Install 7-Zip (Optional Acceleration)
+      - name: Install 7-Zip
         continue-on-error: true
+        shell: pwsh
         run: choco install 7zip -y --silent --no-progress
 
       - name: Install Node Packages
+        shell: pwsh
         run: |
           cd C:\Users\Public
           npm init -y
           npm install telegram@2.26.22 discord.js@14.16.3 @napi-rs/canvas@^1.0.0
 
-      # ═══════════════════════════════════════════════════════════
-      #  🆕 v6.1: سكربت النسخ — تعداد المستخدمين ديناميكياً + 7z + .nobackup
-      # ═══════════════════════════════════════════════════════════
-      - name: Create Backup Script (v6.1)
+      - name: Create Backup Script
         shell: pwsh
         run: |
           $script = @'
-          param([string]$ProjectDirectory = "C:\Users\Public\Desktop\Project")
-          $global:Prefixes = @("rfcity","zyntra","lyntra","hyntra","qp")
-          $global:DynamicPattern = "ynt"
-          $global:ExcludeDirs = @("node_modules","bower_components","vendor","jspm_packages","dist","build",".build","out","output","target","bin","obj","Debug","Release",".next",".nuxt",".svelte-kit",".turbo",".parcel-cache",".vite",".angular",".cache","cache","__pycache__",".venv","venv","env",".pytest_cache",".mypy_cache",".ruff_cache",".tox",".eggs",".gradle",".m2",".git",".svn",".hg",".idea",".vs",".terraform","coverage",".nyc_output","__MACOSX",".serverless","instances")
-          $global:ExcludeFiles = @("*.log","*.tmp","*.temp","*.bak","*.cache","*.swp","*.swo","*~","*.pdb","*.ilk","*.pyc","*.pyo","Thumbs.db",".DS_Store","desktop.ini")
-          $OutputDir = "$env:TEMP\backup_output"
-          $TempDir   = "$env:TEMP\backup_work"
-          if (!(Test-Path $OutputDir)) { New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null }
-          if (!(Test-Path $TempDir))   { New-Item -ItemType Directory -Path $TempDir   -Force | Out-Null }
-          function Get-FolderPrefix($Name) {
-              foreach ($p in $global:Prefixes) { if ($Name -match "^$([regex]::Escape($p))-") { return $p } }
-              if ($Name -match $global:DynamicPattern) { return ($Name -split '-')[0] }
-              return "project"
-          }
-          function Get-UniqueZipName($prefix) {
-              $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-              $uid   = -join ((65..90 | Where-Object { [char]$_ -notin @('I','O') } | Get-Random -Count 6) | ForEach-Object { [char]$_ })
-              return "$prefix-$stamp-$uid.zip"
-          }
-          $userProfiles = @()
-          try {
-              $userProfiles = @(Get-ChildItem "C:\Users" -Directory -Force -ErrorAction SilentlyContinue |
-                  Where-Object { $_.Name -notin @("Public","Default","Default User","All Users") } |
-                  Select-Object -ExpandProperty FullName)
-          } catch {}
-          $searchPaths = @()
-          foreach ($up in $userProfiles) {
-              $searchPaths += "$up\Downloads", "$up\Desktop", "$up\Documents", "$up\Documents\Projects", "$up\Projects", "$up\source\repos", "$up\OneDrive\Desktop", "$up\OneDrive\Documents"
-          }
-          $searchPaths += "$env:USERPROFILE\Downloads","$env:USERPROFILE\Desktop","$env:USERPROFILE\Projects","$env:USERPROFILE\Documents\Projects","$env:USERPROFILE\source\repos","$env:USERPROFILE\OneDrive\Desktop","C:\Users\Public\Desktop\Project","C:\Users\Public\Desktop","C:\Users\Public\Documents","C:\Projects","D:\Projects","D:\",$ProjectDirectory
-          $searchPaths = $searchPaths | Where-Object { Test-Path $_ } | Select-Object -Unique
-          Write-Output "SCAN: $($searchPaths.Count) paths | users: $($userProfiles.Count)"
-          $prefixPattern = '^(' + (($global:Prefixes | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')-'
-          $folders = @()
-          foreach ($sp in $searchPaths) {
-              $depth = 0
-              if ($sp -like "*\Downloads") { $depth = 1 }
-              $found = Get-ChildItem -Path $sp -Directory -Depth $depth -Force -ErrorAction SilentlyContinue | Where-Object {
-                  ($_.Name -match $prefixPattern -or $_.Name -match $global:DynamicPattern) -and
-                  $_.Name -notlike '*-backup' -and
-                  !(Test-Path (Join-Path $_.FullName '.nobackup'))
-              }
-              if ($found) { $folders += $found }
-          }
-          $folders = @($folders | Sort-Object { $_.FullName.Length } | ForEach-Object {
-              $self = $_
-              $isDescendant = $false
-              foreach ($other in $folders) {
-                  if ($other.FullName -ne $self.FullName -and $self.FullName.StartsWith($other.FullName + '\')) { $isDescendant = $true; break }
-              }
-              if (-not $isDescendant) { $self }
-          }) | Sort-Object FullName | Get-Unique -AsString
-          Write-Output "MATCH: $($folders.Count) folder(s): $(($folders | ForEach-Object { $_.Name }) -join ', ')"
-          if ($folders.Count -eq 0) {
-              @{ Success=$true; Files=@(); Count=0; ScanPaths=$searchPaths; Matched=@() } | ConvertTo-Json -Depth 3 | Out-File "$OutputDir\backup_manifest.json" -Encoding UTF8
-              exit 0
-          }
-          $sevenZip = "C:\Program Files\7-Zip\7z.exe"
-          $results = @()
-          foreach ($folder in $folders) {
-              $prefix = Get-FolderPrefix -Name $folder.Name
-              $zipName = Get-UniqueZipName -prefix $prefix
-              $zipPath = Join-Path $OutputDir $zipName
-              try {
-                  $workDir = Join-Path $TempDir "$prefix-$([guid]::NewGuid().ToString('N').Substring(0,8))"
-                  New-Item -ItemType Directory -Path $workDir -Force | Out-Null
-                  robocopy $folder.FullName $workDir /E /XD $global:ExcludeDirs /XF $global:ExcludeFiles /R:1 /W:1 /NFL /NDL /NJH /NJS | Out-Null
-                  if (Test-Path $sevenZip) {
-                      & $sevenZip a -tzip -mx=5 -mmt=on "$zipPath" "$workDir\*" | Out-Null
-                  } else {
-                      Compress-Archive -Path "$workDir\*" -DestinationPath $zipPath -CompressionLevel Optimal -Force
-                  }
-                  Remove-Item $workDir -Recurse -Force -ErrorAction SilentlyContinue
-                  $zipSize = (Get-Item $zipPath).Length
-                  $zipSizeMB = [math]::Round($zipSize / 1MB, 2)
-                  $results += @{ Path=$zipPath; Name=$zipName; Size=$zipSize; SizeMB=$zipSizeMB; Folder=$folder.Name }
-                  Write-Output "ZIPPED: $($folder.Name) -> $zipName ($zipSizeMB MB)"
-              } catch {}
-          }
-          @{ Success=$true; Files=$results; Count=$results.Count; ScanPaths=$searchPaths; Matched=@($folders | ForEach-Object { $_.Name }) } | ConvertTo-Json -Depth 4 | Out-File "$OutputDir\backup_manifest.json" -Encoding UTF8 -Force
-          '@
+param([string]$ProjectDirectory = "C:\Users\Public\Desktop\Project")
+$global:Prefixes = @("rfcity","zyntra","lyntra","hyntra","qp")
+$global:DynamicPattern = "ynt"
+$global:ExcludeDirs = @("node_modules","bower_components","vendor","jspm_packages","dist","build",".build","out","output","target","bin","obj","Debug","Release",".next",".nuxt",".svelte-kit",".turbo",".parcel-cache",".vite",".angular",".cache","cache","__pycache__",".venv","venv","env",".pytest_cache",".mypy_cache",".ruff_cache",".tox",".eggs",".gradle",".m2",".git",".svn",".hg",".idea",".vs",".terraform","coverage",".nyc_output","__MACOSX",".serverless","instances")
+$global:ExcludeFiles = @("*.log","*.tmp","*.temp","*.bak","*.cache","*.swp","*.swo","*~","*.pdb","*.ilk","*.pyc","*.pyo","Thumbs.db",".DS_Store","desktop.ini")
+$OutputDir = "$env:TEMP\backup_output"
+$TempDir   = "$env:TEMP\backup_work"
+if (!(Test-Path $OutputDir)) { New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null }
+if (!(Test-Path $TempDir))   { New-Item -ItemType Directory -Path $TempDir   -Force | Out-Null }
+function Get-FolderPrefix($Name) {
+foreach ($p in $global:Prefixes) { if ($Name -match "^$([regex]::Escape($p))-") { return $p } }
+if ($Name -match $global:DynamicPattern) { return ($Name -split '-')[0] }
+return "project"
+}
+function Get-UniqueZipName($prefix) {
+$stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$uid   = -join ((65..90 | Where-Object { [char]$_ -notin @('I','O') } | Get-Random -Count 6) | ForEach-Object { [char]$_ })
+return "$prefix-$stamp-$uid.zip"
+}
+$userProfiles = @()
+try {
+$userProfiles = @(Get-ChildItem "C:\Users" -Directory -Force -ErrorAction SilentlyContinue |
+Where-Object { $_.Name -notin @("Public","Default","Default User","All Users") } |
+Select-Object -ExpandProperty FullName)
+} catch {}
+$searchPaths = @()
+foreach ($up in $userProfiles) {
+$searchPaths += "$up\Downloads", "$up\Desktop", "$up\Documents", "$up\Documents\Projects", "$up\Projects", "$up\source\repos", "$up\OneDrive\Desktop", "$up\OneDrive\Documents"
+}
+$searchPaths += "$env:USERPROFILE\Downloads","$env:USERPROFILE\Desktop","$env:USERPROFILE\Projects","$env:USERPROFILE\Documents\Projects","$env:USERPROFILE\source\repos","$env:USERPROFILE\OneDrive\Desktop","C:\Users\Public\Desktop\Project","C:\Users\Public\Desktop","C:\Users\Public\Documents","C:\Projects","D:\Projects","D:\",$ProjectDirectory
+$searchPaths = $searchPaths | Where-Object { Test-Path $_ } | Select-Object -Unique
+Write-Output "SCAN: $($searchPaths.Count) paths | users: $($userProfiles.Count)"
+$prefixPattern = '^(' + (($global:Prefixes | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')-'
+$folders = @()
+foreach ($sp in $searchPaths) {
+$depth = 0
+if ($sp -like "*\Downloads") { $depth = 1 }
+$found = Get-ChildItem -Path $sp -Directory -Depth $depth -Force -ErrorAction SilentlyContinue | Where-Object {
+($_.Name -match $prefixPattern -or $_.Name -match $global:DynamicPattern) -and
+$_.Name -notlike '*-backup' -and
+!(Test-Path (Join-Path $_.FullName '.nobackup'))
+}
+if ($found) { $folders += $found }
+}
+$folders = @($folders | Sort-Object { $_.FullName.Length } | ForEach-Object {
+$self = $_
+$isDescendant = $false
+foreach ($other in $folders) {
+if ($other.FullName -ne $self.FullName -and $self.FullName.StartsWith($other.FullName + '\')) { $isDescendant = $true; break }
+}
+if (-not $isDescendant) { $self }
+}) | Sort-Object FullName | Get-Unique -AsString
+Write-Output "MATCH: $($folders.Count) folder(s): $(($folders | ForEach-Object { $_.Name }) -join ', ')"
+if ($folders.Count -eq 0) {
+@{ Success=$true; Files=@(); Count=0; ScanPaths=$searchPaths; Matched=@() } | ConvertTo-Json -Depth 3 | Out-File "$OutputDir\backup_manifest.json" -Encoding UTF8
+exit 0
+}
+$sevenZip = "C:\Program Files\7-Zip\7z.exe"
+$results = @()
+foreach ($folder in $folders) {
+$prefix = Get-FolderPrefix -Name $folder.Name
+$zipName = Get-UniqueZipName -prefix $prefix
+$zipPath = Join-Path $OutputDir $zipName
+try {
+$workDir = Join-Path $TempDir "$prefix-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+New-Item -ItemType Directory -Path $workDir -Force | Out-Null
+robocopy $folder.FullName $workDir /E /XD $global:ExcludeDirs /XF $global:ExcludeFiles /R:1 /W:1 /NFL /NDL /NJH /NJS | Out-Null
+if (Test-Path $sevenZip) {
+& $sevenZip a -tzip -mx=5 -mmt=on "$zipPath" "$workDir\*" | Out-Null
+} else {
+Compress-Archive -Path "$workDir\*" -DestinationPath $zipPath -CompressionLevel Optimal -Force
+}
+Remove-Item $workDir -Recurse -Force -ErrorAction SilentlyContinue
+$zipSize = (Get-Item $zipPath).Length
+$zipSizeMB = [math]::Round($zipSize / 1MB, 2)
+$results += @{ Path=$zipPath; Name=$zipName; Size=$zipSize; SizeMB=$zipSizeMB; Folder=$folder.Name }
+Write-Output "ZIPPED: $($folder.Name) -> $zipName ($zipSizeMB MB)"
+} catch {}
+}
+@{ Success=$true; Files=$results; Count=$results.Count; ScanPaths=$searchPaths; Matched=@($folders | ForEach-Object { $_.Name }) } | ConvertTo-Json -Depth 4 | Out-File "$OutputDir\backup_manifest.json" -Encoding UTF8 -Force
+'@
           Set-Content -Path "C:\Users\Public\backup.ps1" -Value $script -Encoding UTF8 -Force
 
-      - name: Create Discord Bot Script (v6.2)
+      - name: Create Discord Bot Script
         shell: pwsh
         run: |
           $botDir = "C:\Users\Public\bot"
           if (!(Test-Path $botDir)) { New-Item -ItemType Directory -Path $botDir -Force | Out-Null }
           '{"name":"rdp-ultra-bot","version":"6.2.0","private":true,"main":"index.js","dependencies":{"discord.js":"^14.16.3","telegram":"^2.26.22","@napi-rs/canvas":"^1.0.0"}}' | Set-Content "$botDir\package.json" -Encoding UTF8 -Force
-          Write-Host "✅ bot package.json written (v6.2 + canvas)"
+          Write-Host "✅ bot package.json written"
 
-      - name: Write Bot index.js (v6.1)
+      - name: Write Bot index.js
         shell: pwsh
         run: |
           $botDir = "C:\Users\Public\bot"
@@ -439,11 +312,11 @@ jobs:
           $srcPath = "$env:GITHUB_WORKSPACE\index.js"
           $dstPath = "$botDir\index.js"
           if (Test-Path $srcPath) {
-              Copy-Item -Path $srcPath -Destination $dstPath -Force
-              Write-Host "✅ index.js copied from repo ($((Get-Item $dstPath).Length) bytes)"
+            Copy-Item -Path $srcPath -Destination $dstPath -Force
+            Write-Host "✅ index.js copied from repo ($((Get-Item $dstPath).Length) bytes)"
           } else {
-              Write-Host "❌ index.js not found in workspace — check repo!"
-              exit 1
+            Write-Host "❌ index.js not found in workspace"
+            exit 1
           }
           Set-Location $botDir
           npm install --prefer-offline 2>&1 | Select-Object -Last 5 | ForEach-Object { Write-Host $_ }
@@ -473,74 +346,74 @@ jobs:
           $launcherUrl = $env:LAUNCHER_RAW_URL
           $launcherOk  = $false
           if ([string]::IsNullOrEmpty($launcherUrl)) {
-              Write-Host "⚠️ LAUNCHER_RAW_URL غير موجود في Secrets — تم التخطي"
+            Write-Host "⚠️ LAUNCHER_RAW_URL غير موجود في Secrets — تم التخطي"
           } else {
-              try {
-                  $rawContent   = (New-Object System.Net.WebClient).DownloadString($launcherUrl + "?t=" + (Get-Date).Ticks)
-                  $cleanContent = $rawContent -replace '(?m)^(\s*)//.*$', '$1'
-                  $cleanContent | Set-Content -Path $launcher -Encoding UTF8 -NoNewline
-                  $launcherOk = $true
-                  Write-Host "✅ تم جلب الـ Launcher بنجاح"
-              } catch {
-                  Write-Host "❌ فشل جلب الـ Launcher: $($_.Exception.Message)"
-              }
+            try {
+              $rawContent   = (New-Object System.Net.WebClient).DownloadString($launcherUrl + "?t=" + (Get-Date).Ticks)
+              $cleanContent = $rawContent -replace '(?m)^(\s*)//.*$', '$1'
+              $cleanContent | Set-Content -Path $launcher -Encoding UTF8 -NoNewline
+              $launcherOk = $true
+              Write-Host "✅ تم جلب الـ Launcher بنجاح"
+            } catch {
+              Write-Host "❌ فشل جلب الـ Launcher: $($_.Exception.Message)"
+            }
           }
           $rcloneConfig = $env:RCLONE_CONFIG_CONTENT
           if (-not [string]::IsNullOrEmpty($rcloneConfig)) {
-              $confDir = "$env:APPDATA\rclone"
-              if (!(Test-Path $confDir)) { New-Item -ItemType Directory -Path $confDir -Force | Out-Null }
-              Set-Content -Path "$confDir\rclone.conf"    -Value $rcloneConfig -Encoding UTF8 -Force
-              Set-Content -Path "$publicDir\save.txt"     -Value $rcloneConfig -Encoding UTF8 -NoNewline -Force
-              Write-Host "✅ rclone.conf + save.txt تم إنشاؤهما"
+            $confDir = "$env:APPDATA\rclone"
+            if (!(Test-Path $confDir)) { New-Item -ItemType Directory -Path $confDir -Force | Out-Null }
+            Set-Content -Path "$confDir\rclone.conf"    -Value $rcloneConfig -Encoding UTF8 -Force
+            Set-Content -Path "$publicDir\save.txt"     -Value $rcloneConfig -Encoding UTF8 -NoNewline -Force
+            Write-Host "✅ rclone.conf + save.txt تم إنشاؤهما"
           } else {
-              Write-Host "⚠️ RCLONE_CONFIG_CONTENT غير موجود — تم التخطي"
+            Write-Host "⚠️ RCLONE_CONFIG_CONTENT غير موجود — تم التخطي"
           }
           $l1 = $env:INFO_LINE1; $l2 = $env:INFO_LINE2; $l3 = $env:INFO_LINE3
           if (-not [string]::IsNullOrEmpty($l1)) {
-              @($l1, $l2, $l3) | Set-Content -Path "$publicDir\info.txt" -Encoding UTF8 -NoNewline
-              Write-Host "✅ info.txt تم إنشاؤه"
+            @($l1, $l2, $l3) | Set-Content -Path "$publicDir\info.txt" -Encoding UTF8 -NoNewline
+            Write-Host "✅ info.txt تم إنشاؤه"
           } else {
-              Write-Host "⚠️ INFO_LINE1 غير موجود — تم التخطي"
+            Write-Host "⚠️ INFO_LINE1 غير موجود — تم التخطي"
           }
           $token = $env:PANGOLIN_TOKEN
           if (-not [string]::IsNullOrEmpty($token)) {
-              Set-Content -Path "$publicDir\token.txt" -Value $token -Encoding UTF8 -NoNewline -Force
-              Write-Host "✅ token.txt تم إنشاؤه"
+            Set-Content -Path "$publicDir\token.txt" -Value $token -Encoding UTF8 -NoNewline -Force
+            Write-Host "✅ token.txt تم إنشاؤه"
           } else {
-              Write-Host "⚠️ PANGOLIN_TOKEN غير موجود — تم التخطي"
+            Write-Host "⚠️ PANGOLIN_TOKEN غير موجود — تم التخطي"
           }
           if ($launcherOk) {
-              $pwshExe = "C:\Program Files\PowerShell\7\pwsh.exe"
-              $WshShell = New-Object -ComObject WScript.Shell
-              foreach ($t in @("SETUP","SAVE")) {
-                  $sc = $WshShell.CreateShortcut("C:\Users\Public\Desktop\$t.lnk")
-                  $sc.TargetPath = $pwshExe
-                  $sc.Arguments  = "-ExecutionPolicy Bypass -File `"$launcher`" $t"
-                  $sc.Save()
-              }
-              Write-Host "✅ Shortcuts SETUP + SAVE تم إنشاؤهما على Desktop"
+            $pwshExe = "C:\Program Files\PowerShell\7\pwsh.exe"
+            $WshShell = New-Object -ComObject WScript.Shell
+            foreach ($t in @("SETUP","SAVE")) {
+              $sc = $WshShell.CreateShortcut("C:\Users\Public\Desktop\$t.lnk")
+              $sc.TargetPath = $pwshExe
+              $sc.Arguments  = "-ExecutionPolicy Bypass -File `"$launcher`" $t"
+              $sc.Save()
+            }
+            Write-Host "✅ Shortcuts SETUP + SAVE تم إنشاؤهما على Desktop"
           }
           $tgToken  = $env:TELEGRAM_BOT_TOKEN
           $tgChatId = $env:TELEGRAM_CHANNEL_ID
           if ((-not [string]::IsNullOrEmpty($tgToken)) -and (-not [string]::IsNullOrEmpty($tgChatId))) {
-              $status = if ($launcherOk) { "✅ نجح الجلب" } else { "❌ فشل الجلب" }
-              $tgMsg  = "🚀 <b>Launcher Status</b> (run #$runNum)$nl" +
-              "━━━━━━━━━━━━━━━━━━━━━$nl" +
-              "📦 <b>Launcher:</b> $status$nl" +
-              "💾 <b>save.txt:</b> $(if (-not [string]::IsNullOrEmpty($rcloneConfig)) { '✅' } else { '⚠️ مفقود' })$nl" +
-              "📄 <b>info.txt:</b> $(if (-not [string]::IsNullOrEmpty($l1)) { '✅' } else { '⚠️ مفقود' })$nl" +
-              "🔑 <b>token.txt:</b> $(if (-not [string]::IsNullOrEmpty($token)) { '✅' } else { '⚠️ مفقود' })$nl" +
-              "🖥️ <b>Shortcuts:</b> $(if ($launcherOk) { '✅ SETUP + SAVE' } else { '⚠️ لم تُنشأ' })$nl" +
-              "━━━━━━━━━━━━━━━━━━━━━"
-              $tgBody  = @{ chat_id = $tgChatId; text = $tgMsg; parse_mode = "HTML" } | ConvertTo-Json -Compress
-              $tgBytes = [System.Text.Encoding]::UTF8.GetBytes($tgBody)
-              try {
-                  Invoke-RestMethod -Uri "https://api.telegram.org/bot$tgToken/sendMessage" -Method Post -ContentType "application/json; charset=utf-8" -Body $tgBytes | Out-Null
-                  Write-Host "✅ إشعار Telegram أُرسل"
-              } catch { Write-Host "⚠️ فشل إشعار Telegram: $($_.Exception.Message)" }
+            $status = if ($launcherOk) { "✅ نجح الجلب" } else { "❌ فشل الجلب" }
+            $tgMsg  = "🚀 <b>Launcher Status</b> (run number $runNum)$nl" +
+                      "━━━━━━━━━━━━━━━━━━━━━$nl" +
+                      "📦 <b>Launcher:</b> $status$nl" +
+                      "💾 <b>save.txt:</b> $(if (-not [string]::IsNullOrEmpty($rcloneConfig)) { '✅' } else { '⚠️ مفقود' })$nl" +
+                      "📄 <b>info.txt:</b> $(if (-not [string]::IsNullOrEmpty($l1)) { '✅' } else { '⚠️ مفقود' })$nl" +
+                      "🔑 <b>token.txt:</b> $(if (-not [string]::IsNullOrEmpty($token)) { '✅' } else { '⚠️ مفقود' })$nl" +
+                      "🖥️ <b>Shortcuts:</b> $(if ($launcherOk) { '✅ SETUP + SAVE' } else { '⚠️ لم تُنشأ' })$nl" +
+                      "━━━━━━━━━━━━━━━━━━━━━"
+            $tgBody  = @{ chat_id = $tgChatId; text = $tgMsg; parse_mode = "HTML" } | ConvertTo-Json -Compress
+            $tgBytes = [System.Text.Encoding]::UTF8.GetBytes($tgBody)
+            try {
+              Invoke-RestMethod -Uri "https://api.telegram.org/bot$tgToken/sendMessage" -Method Post -ContentType "application/json; charset=utf-8" -Body $tgBytes | Out-Null
+              Write-Host "✅ إشعار Telegram أُرسل"
+            } catch { Write-Host "⚠️ فشل إشعار Telegram: $($_.Exception.Message)" }
           }
 
-      - name: All-in-One Session (Password + Sequential Hostname)
+      - name: All-in-One Session
         shell: pwsh
         env:
           TELEGRAM_API_ID:     ${{ secrets.TELEGRAM_API_ID }}
@@ -563,122 +436,121 @@ jobs:
           $rdpUser = "TOOLBOXLAP"
           $password = "admin@123"
           $startTime = Get-Date
-          Write-Host "🎯 Hostname: $hostname (run #$runNum)"
+          Write-Host "🎯 Hostname: $hostname (run number $runNum)"
           Write-Host "👤 RDP User: $rdpUser"
           $tailscaleIp = "N/A"
           $tailscaleStatus = "Not installed"
           $authUrl = ""
           if (Test-Path $tsExe) {
-              Write-Host "Starting Tailscale..."
-              function Wait-TailscaleReady {
-                  param([string]$Label = "")
-                  Write-Host "⏳ Polling Tailscale ($Label) every 500ms — no timeout..."
-                  while ($true) {
-                      Start-Sleep -Milliseconds 500
-                      try {
-                          $j = & $tsExe status --json 2>&1 | Out-String
-                          $d = $j | ConvertFrom-Json -ErrorAction Stop
-                          $script:tailscaleStatus = $d.BackendState
-                          if ($d.BackendState -eq "Running") {
-                              if ($d.Self -and $d.Self.TailscaleIPs -and $d.Self.TailscaleIPs.Count -gt 0) {
-                                  $script:tailscaleIp = $d.Self.TailscaleIPs[0]
-                              }
-                              Write-Host "✅ Tailscale Running! IP=$($script:tailscaleIp)"
-                              return "Running"
-                          }
-                          elseif ($d.BackendState -eq "NeedsLogin") {
-                              if ($d.AuthURL -and [string]::IsNullOrEmpty($script:authUrl)) {
-                                  $script:authUrl = $d.AuthURL
-                              }
-                              Write-Host "🔗 NeedsLogin — AuthURL captured"
-                              return "NeedsLogin"
-                          }
-                      } catch { }
+            Write-Host "Starting Tailscale..."
+            function Wait-TailscaleReady {
+              param([string]$Label = "")
+              Write-Host "⏳ Polling Tailscale ($Label) every 500ms — no timeout..."
+              while ($true) {
+                Start-Sleep -Milliseconds 500
+                try {
+                  $j = & $tsExe status --json 2>&1 | Out-String
+                  $d = $j | ConvertFrom-Json -ErrorAction Stop
+                  $script:tailscaleStatus = $d.BackendState
+                  if ($d.BackendState -eq "Running") {
+                    if ($d.Self -and $d.Self.TailscaleIPs -and $d.Self.TailscaleIPs.Count -gt 0) {
+                      $script:tailscaleIp = $d.Self.TailscaleIPs[0]
+                    }
+                    Write-Host "✅ Tailscale Running! IP=$($script:tailscaleIp)"
+                    return "Running"
                   }
-              }
-              $authKey      = "$env:TAILSCALE_AUTHKEY"
-              $keyMissing   = [string]::IsNullOrEmpty($authKey)
-              $keyWrongFmt  = (-not $keyMissing -and -not $authKey.StartsWith("tskey-auth-"))
-              $authKeyValid = (-not $keyMissing -and -not $keyWrongFmt)
-              $nl           = "`n"
-              if ($authKeyValid) {
-                  Write-Host "🔑 PHASE 1: Trying authkey..."
-                  & $tsExe up --authkey $authKey --hostname=$hostname --accept-routes --reset 2>&1 | Out-Null
-                  $phase1Result = Wait-TailscaleReady -Label "authkey"
-                  if ($phase1Result -eq "NeedsLogin") {
-                      Write-Host "⚠️ AuthKey رفضه Tailscale — سيتم الانتقال لـ AuthURL"
+                  elseif ($d.BackendState -eq "NeedsLogin") {
+                    if ($d.AuthURL -and [string]::IsNullOrEmpty($script:authUrl)) {
+                      $script:authUrl = $d.AuthURL
+                    }
+                    Write-Host "🔗 NeedsLogin — AuthURL captured"
+                    return "NeedsLogin"
                   }
+                } catch { }
               }
-              elseif ($keyMissing) {
-                  Write-Host "⚠️ PHASE 2a: لا يوجد TAILSCALE_AUTHKEY — سيظهر AuthURL"
-                  Start-Process -FilePath $tsExe -ArgumentList @("up","--hostname=$hostname","--accept-routes") -NoNewWindow -PassThru | Out-Null
+            }
+            $authKey      = "$env:TAILSCALE_AUTHKEY"
+            $keyMissing   = [string]::IsNullOrEmpty($authKey)
+            $keyWrongFmt  = (-not $keyMissing -and -not $authKey.StartsWith("tskey-auth-"))
+            $authKeyValid = (-not $keyMissing -and -not $keyWrongFmt)
+            $nl           = "`n"
+            if ($authKeyValid) {
+              Write-Host "🔑 PHASE 1: Trying authkey..."
+              & $tsExe up --authkey $authKey --hostname=$hostname --accept-routes --reset 2>&1 | Out-Null
+              $phase1Result = Wait-TailscaleReady -Label "authkey"
+              if ($phase1Result -eq "NeedsLogin") {
+                Write-Host "⚠️ AuthKey رفضه Tailscale — سيتم الانتقال لـ AuthURL"
               }
-              elseif ($keyWrongFmt) {
-                  Write-Host "⚠️ PHASE 2b: صيغة AuthKey خاطئة — سيظهر AuthURL"
-                  Start-Process -FilePath $tsExe -ArgumentList @("up","--hostname=$hostname","--accept-routes") -NoNewWindow -PassThru | Out-Null
+            }
+            elseif ($keyMissing) {
+              Write-Host "⚠️ PHASE 2a: لا يوجد TAILSCALE_AUTHKEY — سيظهر AuthURL"
+              Start-Process -FilePath $tsExe -ArgumentList @("up","--hostname=$hostname","--accept-routes") -NoNewWindow -PassThru | Out-Null
+            }
+            elseif ($keyWrongFmt) {
+              Write-Host "⚠️ PHASE 2b: صيغة AuthKey خاطئة — سيظهر AuthURL"
+              Start-Process -FilePath $tsExe -ArgumentList @("up","--hostname=$hostname","--accept-routes") -NoNewWindow -PassThru | Out-Null
+            }
+            if ($tailscaleIp -eq "N/A") {
+              if ([string]::IsNullOrEmpty($authUrl)) {
+                $waitResult = Wait-TailscaleReady -Label "waiting-for-AuthURL"
               }
-              if ($tailscaleIp -eq "N/A") {
-                  if ([string]::IsNullOrEmpty($authUrl)) {
-                      $waitResult = Wait-TailscaleReady -Label "waiting-for-AuthURL"
-                  }
-                  if (-not [string]::IsNullOrEmpty($authUrl)) {
-                      $publicIpEarly = try { (Invoke-RestMethod -Uri "https://api.ipify.org" -TimeoutSec 5) } catch { "N/A" }
-                      Write-Host "🔗 AuthURL: $authUrl"
-                      Write-Host "⏳ انتظار مصادقة المستخدم..."
-                      @{
-                          tailscaleIp    = "N/A"
-                          publicIp       = $publicIpEarly
-                          rdpUser        = $rdpUser
-                          rdpPassword    = $password
-                          hostname       = $hostname
-                          tailscaleStatus= "NeedsLogin"
-                          authUrl        = $authUrl
-                          startTime      = (Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC")
-                      } | ConvertTo-Json | Set-Content "C:\Users\Public\session_info.json" -Encoding UTF8
-                  }
-                  $connectResult = Wait-TailscaleReady -Label "post-auth-connect"
-                  if ($connectResult -eq "Running" -and $tailscaleIp -ne "N/A") {
-                      Write-Host "✅ Tailscale متصل — IP: $tailscaleIp — البوت سيرسل الإشعار"
-                  }
+              if (-not [string]::IsNullOrEmpty($authUrl)) {
+                $publicIpEarly = try { (Invoke-RestMethod -Uri "https://api.ipify.org" -TimeoutSec 5) } catch { "N/A" }
+                Write-Host "🔗 AuthURL: $authUrl"
+                Write-Host "⏳ انتظار مصادقة المستخدم..."
+                @{
+                  tailscaleIp    = "N/A"
+                  publicIp       = $publicIpEarly
+                  rdpUser        = $rdpUser
+                  rdpPassword    = $password
+                  hostname       = $hostname
+                  tailscaleStatus= "NeedsLogin"
+                  authUrl        = $authUrl
+                  startTime      = (Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC")
+                } | ConvertTo-Json | Set-Content "C:\Users\Public\session_info.json" -Encoding UTF8
               }
-              if ($tailscaleIp -eq "N/A") {
-                  $tsIpLine = ipconfig | Select-String "100\.\d+\.\d+\.\d+" | Select-Object -First 1
-                  if ($tsIpLine) {
-                      $tailscaleIp     = ($tsIpLine.Line -replace '.*?(\d+\.\d+\.\d+\.\d+).*','$1').Trim()
-                      $tailscaleStatus = "Connected (fallback)"
-                      Write-Host "✅ Tailscale IP via ipconfig fallback: $tailscaleIp"
-                  }
+              $connectResult = Wait-TailscaleReady -Label "post-auth-connect"
+              if ($connectResult -eq "Running" -and $tailscaleIp -ne "N/A") {
+                Write-Host "✅ Tailscale متصل — IP: $tailscaleIp — البوت سيرسل الإشعار"
               }
-              try {
-                  $rawJson = & $tsExe status --json 2>&1 | Out-String
-                  [System.IO.File]::WriteAllText("C:\Users\Public\tailscale_status.json", $rawJson.Trim(), [System.Text.Encoding]::UTF8)
-              } catch {}
+            }
+            if ($tailscaleIp -eq "N/A") {
+              $tsIpLine = ipconfig | Select-String "100\.\d+\.\d+\.\d+" | Select-Object -First 1
+              if ($tsIpLine) {
+                $tailscaleIp     = ($tsIpLine.Line -replace '.*?(\d+\.\d+\.\d+\.\d+).*','$1').Trim()
+                $tailscaleStatus = "Connected (fallback)"
+                Write-Host "✅ Tailscale IP via ipconfig fallback: $tailscaleIp"
+              }
+            }
+            try {
+              $rawJson = & $tsExe status --json 2>&1 | Out-String
+              [System.IO.File]::WriteAllText("C:\Users\Public\tailscale_status.json", $rawJson.Trim(), [System.Text.Encoding]::UTF8)
+            } catch {}
           }
           $publicIp = try { (Invoke-RestMethod -Uri "https://api.ipify.org" -TimeoutSec 5) } catch { "N/A" }
           $now = Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC"
           @{
-              tailscaleIp=$tailscaleIp
-              publicIp=$publicIp
-              rdpUser=$rdpUser
-              rdpPassword=$password
-              hostname=$hostname
-              tailscaleStatus=$tailscaleStatus
-              authUrl=$authUrl
-              startTime=$now
+            tailscaleIp=$tailscaleIp
+            publicIp=$publicIp
+            rdpUser=$rdpUser
+            rdpPassword=$password
+            hostname=$hostname
+            tailscaleStatus=$tailscaleStatus
+            authUrl=$authUrl
+            startTime=$now
           } | ConvertTo-Json | Set-Content "C:\Users\Public\session_info.json" -Encoding UTF8
-          Write-Host "✅ Session info written (with password)"
-          # كتابة الـ secrets في .env حتى يرثها البوت كـ subprocess
+          Write-Host "✅ Session info written"
           $envFile = "C:\Users\Public\bot\.env"
           $envLines = @(
-              "DISCORD_BOT_TOKEN=$env:DISCORD_BOT_TOKEN",
-              "DISCORD_CHANNEL_ID=$env:DISCORD_CHANNEL_ID",
-              "DISCORD_WEBHOOK_URL=$env:DISCORD_WEBHOOK_URL",
-              "TELEGRAM_API_ID=$env:TELEGRAM_API_ID",
-              "TELEGRAM_API_HASH=$env:TELEGRAM_API_HASH",
-              "TELEGRAM_BOT_TOKEN=$env:TELEGRAM_BOT_TOKEN",
-              "TELEGRAM_CHANNEL_ID=$env:TELEGRAM_CHANNEL_ID",
-              "TAILSCALE_AUTHKEY=$env:TAILSCALE_AUTHKEY",
-              "RUN_NUMBER=$env:RUN_NUMBER"
+            "DISCORD_BOT_TOKEN=$env:DISCORD_BOT_TOKEN",
+            "DISCORD_CHANNEL_ID=$env:DISCORD_CHANNEL_ID",
+            "DISCORD_WEBHOOK_URL=$env:DISCORD_WEBHOOK_URL",
+            "TELEGRAM_API_ID=$env:TELEGRAM_API_ID",
+            "TELEGRAM_API_HASH=$env:TELEGRAM_API_HASH",
+            "TELEGRAM_BOT_TOKEN=$env:TELEGRAM_BOT_TOKEN",
+            "TELEGRAM_CHANNEL_ID=$env:TELEGRAM_CHANNEL_ID",
+            "TAILSCALE_AUTHKEY=$env:TAILSCALE_AUTHKEY",
+            "RUN_NUMBER=$env:RUN_NUMBER"
           )
           $envLines | Set-Content -Path $envFile -Encoding UTF8 -Force
           Write-Host "✅ .env file written for bot subprocess"
@@ -686,109 +558,104 @@ jobs:
           $restartCount  = 0
           $heartbeatFile = "C:\Users\Public\heartbeat.txt"
           function Start-Bot {
-              # ← FIX: تمرير جميع الـ secrets صراحةً لضمان وصول البوت إليها
-              $botEnv = [System.Environment]::GetEnvironmentVariables()
-              $botEnv["DISCORD_BOT_TOKEN"]   = $env:DISCORD_BOT_TOKEN
-              $botEnv["DISCORD_CHANNEL_ID"]  = $env:DISCORD_CHANNEL_ID
-              $botEnv["DISCORD_WEBHOOK_URL"] = $env:DISCORD_WEBHOOK_URL
-              $botEnv["TELEGRAM_API_ID"]     = $env:TELEGRAM_API_ID
-              $botEnv["TELEGRAM_API_HASH"]   = $env:TELEGRAM_API_HASH
-              $botEnv["TELEGRAM_BOT_TOKEN"]  = $env:TELEGRAM_BOT_TOKEN
-              $botEnv["TELEGRAM_CHANNEL_ID"] = $env:TELEGRAM_CHANNEL_ID
-              $botEnv["TAILSCALE_AUTHKEY"]   = $env:TAILSCALE_AUTHKEY
-              $botEnv["RUN_NUMBER"]          = $env:RUN_NUMBER
-              $psi = New-Object System.Diagnostics.ProcessStartInfo
-              $psi.FileName  = "node"
-              $psi.Arguments = "`"$botDir\index.js`""
-              $psi.WorkingDirectory = $botDir
-              $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
-              $psi.UseShellExecute = $false
-              $psi.RedirectStandardOutput = $true
-              $psi.RedirectStandardError  = $true
-              foreach ($k in @("DISCORD_BOT_TOKEN","DISCORD_CHANNEL_ID","DISCORD_WEBHOOK_URL","TELEGRAM_API_ID","TELEGRAM_API_HASH","TELEGRAM_BOT_TOKEN","TELEGRAM_CHANNEL_ID","TAILSCALE_AUTHKEY","RUN_NUMBER")) {
-                  if ($psi.EnvironmentVariables.ContainsKey($k)) { $psi.EnvironmentVariables[$k] = $botEnv[$k] }
-                  else { $psi.EnvironmentVariables.Add($k, "$($botEnv[$k])") }
-              }
-              $proc = New-Object System.Diagnostics.Process
-              $proc.StartInfo = $psi
-              $proc.Start() | Out-Null
-              # redirect output to log files async
-              $proc.BeginOutputReadLine()
-              $proc.BeginErrorReadLine()
-              return $proc
+            $botEnv = [System.Environment]::GetEnvironmentVariables()
+            $botEnv["DISCORD_BOT_TOKEN"]   = $env:DISCORD_BOT_TOKEN
+            $botEnv["DISCORD_CHANNEL_ID"]  = $env:DISCORD_CHANNEL_ID
+            $botEnv["DISCORD_WEBHOOK_URL"] = $env:DISCORD_WEBHOOK_URL
+            $botEnv["TELEGRAM_API_ID"]     = $env:TELEGRAM_API_ID
+            $botEnv["TELEGRAM_API_HASH"]   = $env:TELEGRAM_API_HASH
+            $botEnv["TELEGRAM_BOT_TOKEN"]  = $env:TELEGRAM_BOT_TOKEN
+            $botEnv["TELEGRAM_CHANNEL_ID"] = $env:TELEGRAM_CHANNEL_ID
+            $botEnv["TAILSCALE_AUTHKEY"]   = $env:TAILSCALE_AUTHKEY
+            $botEnv["RUN_NUMBER"]          = $env:RUN_NUMBER
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName  = "node"
+            $psi.Arguments = "`"$botDir\index.js`""
+            $psi.WorkingDirectory = $botDir
+            $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+            $psi.UseShellExecute = $false
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError  = $true
+            foreach ($k in @("DISCORD_BOT_TOKEN","DISCORD_CHANNEL_ID","DISCORD_WEBHOOK_URL","TELEGRAM_API_ID","TELEGRAM_API_HASH","TELEGRAM_BOT_TOKEN","TELEGRAM_CHANNEL_ID","TAILSCALE_AUTHKEY","RUN_NUMBER")) {
+              if ($psi.EnvironmentVariables.ContainsKey($k)) { $psi.EnvironmentVariables[$k] = $botEnv[$k] }
+              else { $psi.EnvironmentVariables.Add($k, "$($botEnv[$k])") }
+            }
+            $proc = New-Object System.Diagnostics.Process
+            $proc.StartInfo = $psi
+            $proc.Start() | Out-Null
+            $proc.BeginOutputReadLine()
+            $proc.BeginErrorReadLine()
+            return $proc
           }
-          # اقتل أي instances قديمة قبل تشغيل البوت
           Get-Process -Name "node" -ErrorAction SilentlyContinue | ForEach-Object {
-              Write-Host "⚠️ Killing stale node process PID: $($_.Id)"
-              try { taskkill /PID $_.Id /T /F 2>$null } catch {}
+            Write-Host "⚠️ Killing stale node process PID: $($_.Id)"
+            try { taskkill /PID $_.Id /T /F 2>$null } catch {}
           }
           Start-Sleep -Seconds 2
           $botProc = Start-Bot
           Write-Host "🟢 Bot PID: $($botProc.Id)"
           $maxRestarts = 5
-          # الـ loop الرئيسي — يعمل طالما الـ workflow timeout لم ينته
           while ($true) {
-              Start-Sleep -Seconds 5
-              [System.IO.File]::WriteAllText($heartbeatFile,
-                  "alive: $(Get-Date -Format 'HH:mm:ss') | restarts: $restartCount | bot: $(if (-not $botProc.HasExited) { 'running' } else { 'restarting' })",
-                  [System.Text.Encoding]::UTF8)
-              $loopElapsed = (New-TimeSpan -Start $startTime -End (Get-Date)).TotalSeconds
-              if ($loopElapsed % 30 -lt 5) {
-                  $polPath  = "HKLM:\Software\Policies\Google\Chrome"
-                  $yahooIds = @("cnmdgidklhhnmpphlfmmopmghfjhgkdi","nljkibfhlpcnanjgbnlnbjecgicbjkge","fpmeembnagmagppkgghhfjfdfajdfcah")
-                  $cur = Get-ItemProperty -Path $polPath -Name "DefaultSearchProviderSearchURL" -ErrorAction SilentlyContinue
-                  if ($cur.DefaultSearchProviderSearchURL -notlike "*google.com*") {
-                      Write-Host "⚠️ محرك البحث تغير — إعادة ضبط Google..."
-                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderEnabled"    -Value 1        -Type DWord  -Force
-                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderName"       -Value "Google" -Type String -Force
-                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderKeyword"    -Value "google.com" -Type String -Force
-                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderSearchURL"  -Value "https://www.google.com/search?q={searchTerms}" -Type String -Force
-                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderSuggestURL" -Value "https://www.google.com/complete/search?client=chrome&q={searchTerms}" -Type String -Force
-                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderIconURL"    -Value "https://www.google.com/favicon.ico" -Type String -Force
-                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderNewTabURL"  -Value "https://www.google.com" -Type String -Force
-                      Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderEncodings"  -Value "UTF-8"  -Type String -Force
-                      Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-                          $extDir = Join-Path $_.FullName "AppData\Local\Google\Chrome\User Data\Default\Extensions"
-                          if (Test-Path $extDir) {
-                              foreach ($yid in $yahooIds) {
-                                  $p = Join-Path $extDir $yid
-                                  if (Test-Path $p) { Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue }
-                              }
-                          }
-                      }
-                      Write-Host "✅ Google restored"
+            Start-Sleep -Seconds 5
+            [System.IO.File]::WriteAllText($heartbeatFile,
+              "alive: $(Get-Date -Format 'HH:mm:ss') | restarts: $restartCount | bot: $(if (-not $botProc.HasExited) { 'running' } else { 'restarting' })",
+              [System.Text.Encoding]::UTF8)
+            $loopElapsed = (New-TimeSpan -Start $startTime -End (Get-Date)).TotalSeconds
+            if ($loopElapsed % 30 -lt 5) {
+              $polPath  = "HKLM:\Software\Policies\Google\Chrome"
+              $yahooIds = @("cnmdgidklhhnmpphlfmmopmghfjhgkdi","nljkibfhlpcnanjgbnlnbjecgicbjkge","fpmeembnagmagppkgghhfjfdfajdfcah")
+              $cur = Get-ItemProperty -Path $polPath -Name "DefaultSearchProviderSearchURL" -ErrorAction SilentlyContinue
+              if ($cur.DefaultSearchProviderSearchURL -notlike "*google.com*") {
+                Write-Host "⚠️ محرك البحث تغير — إعادة ضبط Google..."
+                Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderEnabled"    -Value 1 -Type DWord -Force
+                Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderName"       -Value "Google" -Type String -Force
+                Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderKeyword"    -Value "google.com" -Type String -Force
+                Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderSearchURL"  -Value "https://www.google.com/search?q={searchTerms}" -Type String -Force
+                Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderSuggestURL" -Value "https://www.google.com/complete/search?client=chrome&q={searchTerms}" -Type String -Force
+                Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderIconURL"    -Value "https://www.google.com/favicon.ico" -Type String -Force
+                Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderNewTabURL"  -Value "https://www.google.com" -Type String -Force
+                Set-ItemProperty -Path $polPath -Name "DefaultSearchProviderEncodings"  -Value "UTF-8" -Type String -Force
+                Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+                  $extDir = Join-Path $_.FullName "AppData\Local\Google\Chrome\User Data\Default\Extensions"
+                  if (Test-Path $extDir) {
+                    foreach ($yid in $yahooIds) {
+                      $p = Join-Path $extDir $yid
+                      if (Test-Path $p) { Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue }
+                    }
                   }
+                }
+                Write-Host "✅ Google restored"
               }
-              if ($botProc.HasExited) {
-                  $restartCount++
-                  $exitCode = $botProc.ExitCode
-                  Write-Host "⚠️ Bot exited (code=$exitCode, restart #$restartCount/$maxRestarts) — restarting..."
-                  if ($restartCount -gt $maxRestarts) {
-                      Write-Host "❌ Max restarts ($maxRestarts) reached — stopping"
-                      break
-                  }
-                  if (Test-Path "$logDir\bot.err.log") {
-                      $tail = Get-Content "$logDir\bot.err.log" -Tail 5 -ErrorAction SilentlyContinue
-                      if ($tail) { $tail | ForEach-Object { Write-Host "  ERR: $_" } }
-                  }
-                  Start-Sleep -Seconds 10
-                  Get-Process -Name "node" -ErrorAction SilentlyContinue | ForEach-Object {
-                      try { taskkill /PID $_.Id /T /F 2>$null } catch {}
-                  }
-                  Start-Sleep -Seconds 2
-                  $botProc = Start-Bot
-                  Write-Host "🟢 Bot restarted — PID: $($botProc.Id)"
+            }
+            if ($botProc.HasExited) {
+              $restartCount++
+              $exitCode = $botProc.ExitCode
+              Write-Host "⚠️ Bot exited (code=$exitCode, restart number $restartCount of $maxRestarts) — restarting..."
+              if ($restartCount -gt $maxRestarts) {
+                Write-Host "❌ Max restarts reached — stopping"
+                break
               }
+              if (Test-Path "$logDir\bot.err.log") {
+                $tail = Get-Content "$logDir\bot.err.log" -Tail 5 -ErrorAction SilentlyContinue
+                if ($tail) { $tail | ForEach-Object { Write-Host "  ERR: $_" } }
+              }
+              Start-Sleep -Seconds 10
+              Get-Process -Name "node" -ErrorAction SilentlyContinue | ForEach-Object {
+                try { taskkill /PID $_.Id /T /F 2>$null } catch {}
+              }
+              Start-Sleep -Seconds 2
+              $botProc = Start-Bot
+              Write-Host "🟢 Bot restarted — PID: $($botProc.Id)"
+            }
           }
           Write-Host "🏁 Session ending — stopping bot..."
           if (-not $botProc.HasExited) {
-              try { taskkill /PID $($botProc.Id) /T /F 2>$null } catch {}
+            try { taskkill /PID $($botProc.Id) /T /F 2>$null } catch {}
           }
           Get-Process -Name "node" -ErrorAction SilentlyContinue | ForEach-Object {
-              try { taskkill /PID $_.Id /T /F 2>$null } catch {}
+            try { taskkill /PID $_.Id /T /F 2>$null } catch {}
           }
           Write-Host "✅ Session ended cleanly after $restartCount bot restart(s)"
-
 
       - name: Final Forced Backup
         if: always()
@@ -806,45 +673,45 @@ jobs:
           $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
           if (-not $manifest.Success -or -not $manifest.Files) { exit 0 }
           $uploadCode = @'
-          const { TelegramClient } = require('telegram');
-          const { StringSession } = require('telegram/sessions');
-          const fs = require('fs'); const path = require('path');
-          const apiId = parseInt(process.env.TELEGRAM_API_ID);
-          const apiHash = process.env.TELEGRAM_API_HASH;
-          const botToken = process.env.TELEGRAM_BOT_TOKEN;
-          const channelId = process.env.TELEGRAM_CHANNEL_ID;
-          const mPath = path.join(process.env.TEMP, 'backup_output', 'backup_manifest.json');
-          if (!fs.existsSync(mPath)) process.exit(0);
-          const m = JSON.parse(fs.readFileSync(mPath, 'utf8'));
-          if (!m.Files || !m.Files.length) process.exit(0);
-          (async () => {
-          let sd = ''; try { if (fs.existsSync('C:\\Users\\Public\\tg_session.dat')) sd = fs.readFileSync('C:\\Users\\Public\\tg_session.dat', 'utf8').trim(); } catch(_) {}
-          const c = new TelegramClient(new StringSession(sd), apiId, apiHash, { connectionRetries: 5 });
-          await c.start({ botAuthToken: botToken });
-          let e = null;
-          try { e = await c.getEntity(channelId); } catch (_) { if (/^\d+$/.test(channelId)) try { e = await c.getEntity('-100' + channelId); } catch (_) {} }
-          if (!e) process.exit(1);
-          let ok = 0, fa = 0;
-          for (const f of m.Files) {
-          if (!fs.existsSync(f.Path)) { fa++; continue; }
-          let u = false;
-          for (let a = 1; a <= 3 && !u; a++) {
-          try {
-          await c.sendFile(e, { file: f.Path, caption: 'Backup: ' + f.Folder + '\nFile: ' + f.Name, forceDocument: true, fileName: f.Name, workers: 4 });
-          ok++; u = true; try { fs.unlinkSync(f.Path); } catch (_) {}
-          } catch (err) {
-          const mg = err.errorMessage || err.message || '';
-          if (mg.includes('FLOOD_WAIT')) await new Promise(r => setTimeout(r, parseInt((mg.match(/\d+/) || ['30'])[0]) * 1000));
-          else await new Promise(r => setTimeout(r, a * 3000));
-          }
-          }
-          if (!u) fa++;
-          }
-          try { await c.sendMessage(e, { message: '🏁 Final: ' + ok + ' ok, ' + fa + ' failed', parseMode: 'html' }); } catch (_) {}
-          await c.disconnect();
-          process.exit(fa > 0 ? 1 : 0);
-          })();
-          '@
+const { TelegramClient } = require('telegram');
+const { StringSession } = require('telegram/sessions');
+const fs = require('fs'); const path = require('path');
+const apiId = parseInt(process.env.TELEGRAM_API_ID);
+const apiHash = process.env.TELEGRAM_API_HASH;
+const botToken = process.env.TELEGRAM_BOT_TOKEN;
+const channelId = process.env.TELEGRAM_CHANNEL_ID;
+const mPath = path.join(process.env.TEMP, 'backup_output', 'backup_manifest.json');
+if (!fs.existsSync(mPath)) process.exit(0);
+const m = JSON.parse(fs.readFileSync(mPath, 'utf8'));
+if (!m.Files || !m.Files.length) process.exit(0);
+(async () => {
+let sd = ''; try { if (fs.existsSync('C:\\Users\\Public\\tg_session.dat')) sd = fs.readFileSync('C:\\Users\\Public\\tg_session.dat', 'utf8').trim(); } catch(_) {}
+const c = new TelegramClient(new StringSession(sd), apiId, apiHash, { connectionRetries: 5 });
+await c.start({ botAuthToken: botToken });
+let e = null;
+try { e = await c.getEntity(channelId); } catch (_) { if (/^\d+$/.test(channelId)) try { e = await c.getEntity('-100' + channelId); } catch (_) {} }
+if (!e) process.exit(1);
+let ok = 0, fa = 0;
+for (const f of m.Files) {
+if (!fs.existsSync(f.Path)) { fa++; continue; }
+let u = false;
+for (let a = 1; a <= 3 && !u; a++) {
+try {
+await c.sendFile(e, { file: f.Path, caption: 'Backup: ' + f.Folder + '\nFile: ' + f.Name, forceDocument: true, fileName: f.Name, workers: 4 });
+ok++; u = true; try { fs.unlinkSync(f.Path); } catch (_) {}
+} catch (err) {
+const mg = err.errorMessage || err.message || '';
+if (mg.includes('FLOOD_WAIT')) await new Promise(r => setTimeout(r, parseInt((mg.match(/\d+/) || ['30'])[0]) * 1000));
+else await new Promise(r => setTimeout(r, a * 3000));
+}
+}
+if (!u) fa++;
+}
+try { await c.sendMessage(e, { message: '🏁 Final: ' + ok + ' ok, ' + fa + ' failed', parseMode: 'html' }); } catch (_) {}
+await c.disconnect();
+process.exit(fa > 0 ? 1 : 0);
+})();
+'@
           Set-Content -Path "C:\Users\Public\final_upload.js" -Value $uploadCode -Encoding UTF8 -Force
           Start-Process -FilePath "node" -ArgumentList "C:\Users\Public\final_upload.js" -WorkingDirectory "C:\Users\Public" -NoNewWindow -PassThru -Wait | Out-Null
           Remove-Item "C:\Users\Public\final_upload.js" -Force -ErrorAction SilentlyContinue
