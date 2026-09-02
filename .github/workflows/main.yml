@@ -1,11 +1,8 @@
 name: RDP_ULTRA_STATION_TELEGRAM
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
   workflow_dispatch:
+  pull_request:   # احذف هذا السطر إذا كنت تريد التشغيل اليدوي فقط
 
 jobs:
   secure-rdp:
@@ -13,16 +10,26 @@ jobs:
     timeout-minutes: 360
     env:
       RUN_NUMBER: ${{ github.run_number }}
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: 'C:\Users\Public\bot\package.json'
+      - name: Verify Node.js
+        shell: pwsh
+        run: |
+          try {
+            $nodeVer = (node --version 2>&1).Trim()
+            if ($nodeVer -match '^v\d') {
+              Write-Host "Node.js already installed: $nodeVer"
+              exit 0
+            }
+            throw "Node not responding"
+          } catch {
+            choco install nodejs-lts -y --silent --no-progress
+            $nodeDir = 'C:' + [char]92 + 'Program Files' + [char]92 + 'nodejs'
+            Add-Content -Path $env:GITHUB_PATH -Value $nodeDir
+          }
 
       - name: Setup RDP User
         shell: pwsh
@@ -98,7 +105,7 @@ jobs:
           Set-ItemProperty -Path $pol -Name "MemorySaverEnabled"              -Value 1 -Type DWord -Force
           Set-ItemProperty -Path $pol -Name "HighEfficiencyModeEnabled"       -Value 1 -Type DWord -Force
           Set-ItemProperty -Path $pol -Name "BackgroundModeEnabled"           -Value 0 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "StartupBoostEnabled"             -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $pol -Name "StartupBoostEnabled"            -Value 0 -Type DWord -Force
           Set-ItemProperty -Path $pol -Name "HardwareAccelerationModeEnabled" -Value 1 -Type DWord -Force
           Set-ItemProperty -Path $pol -Name "DiskCacheSize"                   -Value 268435456 -Type QWord -Force
           Set-ItemProperty -Path $pol -Name "MediaRouterCastAllowAllIPs"      -Value 0 -Type DWord -Force
@@ -115,24 +122,35 @@ jobs:
           Set-ItemProperty -Path $pol -Name "NTPCustomBackgroundEnabled"    -Value 0 -Type DWord -Force
           Set-ItemProperty -Path $pol -Name "SidePanelEnabled"              -Value 1 -Type DWord -Force
           Set-ItemProperty -Path $pol -Name "TranslateEnabled"              -Value 1 -Type DWord -Force
-          # إعداد الـ Watchdog (تم تبسيطه لتجنب التعقيد)
+          try {
+            $regKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey("Software\Policies\Google\Chrome",[Microsoft.Win32.RegistryKeyPermissionCheck]::ReadWriteSubTree,[System.Security.AccessControl.RegistryRights]::ChangePermissions)
+            if ($regKey) {
+              $acl = $regKey.GetAccessControl()
+              $usersRule = New-Object System.Security.AccessControl.RegistryAccessRule("BUILTIN\Users","ReadKey","ContainerInherit,ObjectInherit","None","Allow")
+              $adminRule = New-Object System.Security.AccessControl.RegistryAccessRule("BUILTIN\Administrators","FullControl","ContainerInherit,ObjectInherit","None","Allow")
+              $acl.SetAccessRule($usersRule)
+              $acl.SetAccessRule($adminRule)
+              $regKey.SetAccessControl($acl); $regKey.Close()
+              Write-Host "✅ Registry ACLs Locked"
+            }
+          } catch { Write-Host "⚠️ ACL Warning: $_" }
           $wdLines = @(
-            '$pol = "HKLM:\Software\Policies\Google\Chrome"',
-            '$checks = @{ "DefaultSearchProviderSearchURL"="*google.com*"; "BrowserSignin"=2; "PasswordManagerEnabled"=1; "SyncDisabled"=0; "SafeBrowsingProtectionLevel"=2; "MemorySaverEnabled"=1 }',
-            '$needsFix = $false',
-            'foreach ($key in $checks.Keys) { $val = (Get-ItemProperty -Path $pol -Name $key -ErrorAction SilentlyContinue).$key; if ($val -notlike $checks[$key]) { $needsFix = $true; break } }',
-            'if ($needsFix) {',
-            '    Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEnabled"   -Value 1 -Type DWord -Force',
-            '    Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL" -Value "https://www.google.com/search?q={searchTerms}&hl=en&gl=us" -Type String -Force',
-            '    Set-ItemProperty -Path $pol -Name "BrowserSignin"                  -Value 2 -Type DWord -Force',
-            '    Set-ItemProperty -Path $pol -Name "PasswordManagerEnabled"         -Value 1 -Type DWord -Force',
-            '    Set-ItemProperty -Path $pol -Name "SyncDisabled"                   -Value 0 -Type DWord -Force',
-            '    Set-ItemProperty -Path $pol -Name "SafeBrowsingProtectionLevel"    -Value 2 -Type DWord -Force',
-            '    Set-ItemProperty -Path $pol -Name "MemorySaverEnabled"             -Value 1 -Type DWord -Force',
-            '    Write-Output "$((Get-Date).ToString()): Chrome policies restored" | Out-File "C:\logs\chrome_watchdog.log" -Append',
-            '}',
-            'Remove-ItemProperty -Path $pol -Name "SyncTypesListDisabled" -ErrorAction SilentlyContinue',
-            'Remove-Item -Path "$pol\SyncTypesListDisabled" -Recurse -Force -ErrorAction SilentlyContinue'
+          '$pol = "HKLM:\Software\Policies\Google\Chrome"',
+          '$checks = @{ "DefaultSearchProviderSearchURL"="*google.com*"; "BrowserSignin"=2; "PasswordManagerEnabled"=1; "SyncDisabled"=0; "SafeBrowsingProtectionLevel"=2; "MemorySaverEnabled"=1 }',
+          '$needsFix = $false',
+          'foreach ($key in $checks.Keys) { $val = (Get-ItemProperty -Path $pol -Name $key -ErrorAction SilentlyContinue).$key; if ($val -notlike $checks[$key]) { $needsFix = $true; break } }',
+          'if ($needsFix) {',
+          '    Set-ItemProperty -Path $pol -Name "DefaultSearchProviderEnabled"   -Value 1 -Type DWord -Force',
+          '    Set-ItemProperty -Path $pol -Name "DefaultSearchProviderSearchURL" -Value "https://www.google.com/search?q={searchTerms}&hl=en&gl=us" -Type String -Force',
+          '    Set-ItemProperty -Path $pol -Name "BrowserSignin"                  -Value 2 -Type DWord -Force',
+          '    Set-ItemProperty -Path $pol -Name "PasswordManagerEnabled"         -Value 1 -Type DWord -Force',
+          '    Set-ItemProperty -Path $pol -Name "SyncDisabled"                   -Value 0 -Type DWord -Force',
+          '    Set-ItemProperty -Path $pol -Name "SafeBrowsingProtectionLevel"    -Value 2 -Type DWord -Force',
+          '    Set-ItemProperty -Path $pol -Name "MemorySaverEnabled"             -Value 1 -Type DWord -Force',
+          '    Write-Output "$((Get-Date).ToString()): Chrome policies restored" | Out-File "C:\logs\chrome_watchdog.log" -Append',
+          '}',
+          'Remove-ItemProperty -Path $pol -Name "SyncTypesListDisabled" -ErrorAction SilentlyContinue',
+          'Remove-Item -Path "$pol\SyncTypesListDisabled" -Recurse -Force -ErrorAction SilentlyContinue'
           )
           Set-Content -Path "C:\Users\Public\chrome_watchdog.ps1" -Value $wdLines -Encoding UTF8 -Force
           $pwshPath = "C:\Program Files\PowerShell\7\pwsh.exe"
@@ -162,8 +180,8 @@ jobs:
           Set-ItemProperty -Path $pol -Name "StartupBoostEnabled" -Value 0 -Type DWord -Force
           Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -like 'ChromeSync*' } | Unregister-ScheduledTask -Confirm:$false -ErrorAction SilentlyContinue
           $shortcuts = @(
-            "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp\ChromeSyncOnLogon.lnk",
-            (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\StartUp\ChromeSyncOnLogon.lnk")
+          "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp\ChromeSyncOnLogon.lnk",
+          (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\StartUp\ChromeSyncOnLogon.lnk")
           )
           Remove-Item -Path $shortcuts -Force -ErrorAction SilentlyContinue
           Remove-Item "C:\Users\Public\chrome_sync_logon.ps1" -Force -ErrorAction SilentlyContinue
@@ -193,87 +211,87 @@ jobs:
         shell: pwsh
         run: |
           $script = @'
-param([string]$ProjectDirectory = "C:\Users\Public\Desktop\Project")
-$global:Prefixes = @("rfcity","zyntra","lyntra","hyntra","qp")
-$global:DynamicPattern = "ynt"
-$global:ExcludeDirs = @("node_modules","bower_components","vendor","jspm_packages","dist","build",".build","out","output","target","bin","obj","Debug","Release",".next",".nuxt",".svelte-kit",".turbo",".parcel-cache",".vite",".angular",".cache","cache","__pycache__",".venv","venv","env",".pytest_cache",".mypy_cache",".ruff_cache",".tox",".eggs",".gradle",".m2",".git",".svn",".hg",".idea",".vs",".terraform","coverage",".nyc_output","__MACOSX",".serverless","instances")
-$global:ExcludeFiles = @("*.log","*.tmp","*.temp","*.bak","*.cache","*.swp","*.swo","*~","*.pdb","*.ilk","*.pyc","*.pyo","Thumbs.db",".DS_Store","desktop.ini")
-$OutputDir = "$env:TEMP\backup_output"
-$TempDir   = "$env:TEMP\backup_work"
-if (!(Test-Path $OutputDir)) { New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null }
-if (!(Test-Path $TempDir))   { New-Item -ItemType Directory -Path $TempDir   -Force | Out-Null }
-function Get-FolderPrefix($Name) {
-foreach ($p in $global:Prefixes) { if ($Name -match "^$([regex]::Escape($p))-") { return $p } }
-if ($Name -match $global:DynamicPattern) { return ($Name -split '-')[0] }
-return "project"
-}
-function Get-UniqueZipName($prefix) {
-$stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$uid   = -join ((65..90 | Where-Object { [char]$_ -notin @('I','O') } | Get-Random -Count 6) | ForEach-Object { [char]$_ })
-return "$prefix-$stamp-$uid.zip"
-}
-$userProfiles = @()
-try {
-$userProfiles = @(Get-ChildItem "C:\Users" -Directory -Force -ErrorAction SilentlyContinue |
-Where-Object { $_.Name -notin @("Public","Default","Default User","All Users") } |
-Select-Object -ExpandProperty FullName)
-} catch {}
-$searchPaths = @()
-foreach ($up in $userProfiles) {
-$searchPaths += "$up\Downloads", "$up\Desktop", "$up\Documents", "$up\Documents\Projects", "$up\Projects", "$up\source\repos", "$up\OneDrive\Desktop", "$up\OneDrive\Documents"
-}
-$searchPaths += "$env:USERPROFILE\Downloads","$env:USERPROFILE\Desktop","$env:USERPROFILE\Projects","$env:USERPROFILE\Documents\Projects","$env:USERPROFILE\source\repos","$env:USERPROFILE\OneDrive\Desktop","C:\Users\Public\Desktop\Project","C:\Users\Public\Desktop","C:\Users\Public\Documents","C:\Projects","D:\Projects","D:\",$ProjectDirectory
-$searchPaths = $searchPaths | Where-Object { Test-Path $_ } | Select-Object -Unique
-Write-Output "SCAN: $($searchPaths.Count) paths | users: $($userProfiles.Count)"
-$prefixPattern = '^(' + (($global:Prefixes | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')-'
-$folders = @()
-foreach ($sp in $searchPaths) {
-$depth = 0
-if ($sp -like "*\Downloads") { $depth = 1 }
-$found = Get-ChildItem -Path $sp -Directory -Depth $depth -Force -ErrorAction SilentlyContinue | Where-Object {
-($_.Name -match $prefixPattern -or $_.Name -match $global:DynamicPattern) -and
-$_.Name -notlike '*-backup' -and
-!(Test-Path (Join-Path $_.FullName '.nobackup'))
-}
-if ($found) { $folders += $found }
-}
-$folders = @($folders | Sort-Object { $_.FullName.Length } | ForEach-Object {
-$self = $_
-$isDescendant = $false
-foreach ($other in $folders) {
-if ($other.FullName -ne $self.FullName -and $self.FullName.StartsWith($other.FullName + '\')) { $isDescendant = $true; break }
-}
-if (-not $isDescendant) { $self }
-}) | Sort-Object FullName | Get-Unique -AsString
-Write-Output "MATCH: $($folders.Count) folder(s): $(($folders | ForEach-Object { $_.Name }) -join ', ')"
-if ($folders.Count -eq 0) {
-@{ Success=$true; Files=@(); Count=0; ScanPaths=$searchPaths; Matched=@() } | ConvertTo-Json -Depth 3 | Out-File "$OutputDir\backup_manifest.json" -Encoding UTF8
-exit 0
-}
-$sevenZip = "C:\Program Files\7-Zip\7z.exe"
-$results = @()
-foreach ($folder in $folders) {
-$prefix = Get-FolderPrefix -Name $folder.Name
-$zipName = Get-UniqueZipName -prefix $prefix
-$zipPath = Join-Path $OutputDir $zipName
-try {
-$workDir = Join-Path $TempDir "$prefix-$([guid]::NewGuid().ToString('N').Substring(0,8))"
-New-Item -ItemType Directory -Path $workDir -Force | Out-Null
-robocopy $folder.FullName $workDir /E /XD $global:ExcludeDirs /XF $global:ExcludeFiles /R:1 /W:1 /NFL /NDL /NJH /NJS | Out-Null
-if (Test-Path $sevenZip) {
-& $sevenZip a -tzip -mx=5 -mmt=on "$zipPath" "$workDir\*" | Out-Null
-} else {
-Compress-Archive -Path "$workDir\*" -DestinationPath $zipPath -CompressionLevel Optimal -Force
-}
-Remove-Item $workDir -Recurse -Force -ErrorAction SilentlyContinue
-$zipSize = (Get-Item $zipPath).Length
-$zipSizeMB = [math]::Round($zipSize / 1MB, 2)
-$results += @{ Path=$zipPath; Name=$zipName; Size=$zipSize; SizeMB=$zipSizeMB; Folder=$folder.Name }
-Write-Output "ZIPPED: $($folder.Name) -> $zipName ($zipSizeMB MB)"
-} catch {}
-}
-@{ Success=$true; Files=$results; Count=$results.Count; ScanPaths=$searchPaths; Matched=@($folders | ForEach-Object { $_.Name }) } | ConvertTo-Json -Depth 4 | Out-File "$OutputDir\backup_manifest.json" -Encoding UTF8 -Force
-'@
+          param([string]$ProjectDirectory = "C:\Users\Public\Desktop\Project")
+          $global:Prefixes = @("rfcity","zyntra","lyntra","hyntra","qp")
+          $global:DynamicPattern = "ynt"
+          $global:ExcludeDirs = @("node_modules","bower_components","vendor","jspm_packages","dist","build",".build","out","output","target","bin","obj","Debug","Release",".next",".nuxt",".svelte-kit",".turbo",".parcel-cache",".vite",".angular",".cache","cache","__pycache__",".venv","venv","env",".pytest_cache",".mypy_cache",".ruff_cache",".tox",".eggs",".gradle",".m2",".git",".svn",".hg",".idea",".vs",".terraform","coverage",".nyc_output","__MACOSZ",".serverless","instances")
+          $global:ExcludeFiles = @("*.log","*.tmp","*.temp","*.bak","*.cache","*.swp","*.swo","*~","*.pdb","*.ilk","*.pyc","*.pyo","Thumbs.db",".DS_Store","desktop.ini")
+          $OutputDir = "$env:TEMP\backup_output"
+          $TempDir   = "$env:TEMP\backup_work"
+          if (!(Test-Path $OutputDir)) { New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null }
+          if (!(Test-Path $TempDir))   { New-Item -ItemType Directory -Path $TempDir   -Force | Out-Null }
+          function Get-FolderPrefix($Name) {
+          foreach ($p in $global:Prefixes) { if ($Name -match "^$([regex]::Escape($p))-") { return $p } }
+          if ($Name -match $global:DynamicPattern) { return ($Name -split '-')[0] }
+          return "project"
+          }
+          function Get-UniqueZipName($prefix) {
+          $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+          $uid   = -join ((65..90 | Where-Object { [char]$_ -notin @('I','O') } | Get-Random -Count 6) | ForEach-Object { [char]$_ })
+          return "$prefix-$stamp-$uid.zip"
+          }
+          $userProfiles = @()
+          try {
+          $userProfiles = @(Get-ChildItem "C:\Users" -Directory -Force -ErrorAction SilentlyContinue |
+          Where-Object { $_.Name -notin @("Public","Default","Default User","All Users") } |
+          Select-Object -ExpandProperty FullName)
+          } catch {}
+          $searchPaths = @()
+          foreach ($up in $userProfiles) {
+          $searchPaths += "$up\Downloads", "$up\Desktop", "$up\Documents", "$up\Documents\Projects", "$up\Projects", "$up\source\repos", "$up\OneDrive\Desktop", "$up\OneDrive\Documents"
+          }
+          $searchPaths += "$env:USERPROFILE\Downloads","$env:USERPROFILE\Desktop","$env:USERPROFILE\Projects","$env:USERPROFILE\Documents\Projects","$env:USERPROFILE\source\repos","$env:USERPROFILE\OneDrive\Desktop","C:\Users\Public\Desktop\Project","C:\Users\Public\Desktop","C:\Users\Public\Documents","C:\Projects","D:\Projects","D:\",$ProjectDirectory
+          $searchPaths = $searchPaths | Where-Object { Test-Path $_ } | Select-Object -Unique
+          Write-Output "SCAN: $($searchPaths.Count) paths | users: $($userProfiles.Count)"
+          $prefixPattern = '^(' + (($global:Prefixes | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')-'
+          $folders = @()
+          foreach ($sp in $searchPaths) {
+          $depth = 0
+          if ($sp -like "*\Downloads") { $depth = 1 }
+          $found = Get-ChildItem -Path $sp -Directory -Depth $depth -Force -ErrorAction SilentlyContinue | Where-Object {
+          ($_.Name -match $prefixPattern -or $_.Name -match $global:DynamicPattern) -and
+          $_.Name -notlike '*-backup' -and
+          !(Test-Path (Join-Path $_.FullName '.nobackup'))
+          }
+          if ($found) { $folders += $found }
+          }
+          $folders = @($folders | Sort-Object { $_.FullName.Length } | ForEach-Object {
+          $self = $_
+          $isDescendant = $false
+          foreach ($other in $folders) {
+          if ($other.FullName -ne $self.FullName -and $self.FullName.StartsWith($other.FullName + '\')) { $isDescendant = $true; break }
+          }
+          if (-not $isDescendant) { $self }
+          }) | Sort-Object FullName | Get-Unique -AsString
+          Write-Output "MATCH: $($folders.Count) folder(s): $(($folders | ForEach-Object { $_.Name }) -join ', ')"
+          if ($folders.Count -eq 0) {
+          @{ Success=$true; Files=@(); Count=0; ScanPaths=$searchPaths; Matched=@() } | ConvertTo-Json -Depth 3 | Out-File "$OutputDir\backup_manifest.json" -Encoding UTF8
+          exit 0
+          }
+          $sevenZip = "C:\Program Files\7-Zip\7z.exe"
+          $results = @()
+          foreach ($folder in $folders) {
+          $prefix = Get-FolderPrefix -Name $folder.Name
+          $zipName = Get-UniqueZipName -prefix $prefix
+          $zipPath = Join-Path $OutputDir $zipName
+          try {
+          $workDir = Join-Path $TempDir "$prefix-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+          New-Item -ItemType Directory -Path $workDir -Force | Out-Null
+          robocopy $folder.FullName $workDir /E /XD $global:ExcludeDirs /XF $global:ExcludeFiles /R:1 /W:1 /NFL /NDL /NJH /NJS | Out-Null
+          if (Test-Path $sevenZip) {
+          & $sevenZip a -tzip -mx=5 -mmt=on "$zipPath" "$workDir\*" | Out-Null
+          } else {
+          Compress-Archive -Path "$workDir\*" -DestinationPath $zipPath -CompressionLevel Optimal -Force
+          }
+          Remove-Item $workDir -Recurse -Force -ErrorAction SilentlyContinue
+          $zipSize = (Get-Item $zipPath).Length
+          $zipSizeMB = [math]::Round($zipSize / 1MB, 2)
+          $results += @{ Path=$zipPath; Name=$zipName; Size=$zipSize; SizeMB=$zipSizeMB; Folder=$folder.Name }
+          Write-Output "ZIPPED: $($folder.Name) -> $zipName ($zipSizeMB MB)"
+          } catch {}
+          }
+          @{ Success=$true; Files=$results; Count=$results.Count; ScanPaths=$searchPaths; Matched=@($folders | ForEach-Object { $_.Name }) } | ConvertTo-Json -Depth 4 | Out-File "$OutputDir\backup_manifest.json" -Encoding UTF8 -Force
+          '@
           Set-Content -Path "C:\Users\Public\backup.ps1" -Value $script -Encoding UTF8 -Force
 
       - name: Create Discord Bot Script
@@ -378,13 +396,13 @@ Write-Output "ZIPPED: $($folder.Name) -> $zipName ($zipSizeMB MB)"
           if ((-not [string]::IsNullOrEmpty($tgToken)) -and (-not [string]::IsNullOrEmpty($tgChatId))) {
             $status = if ($launcherOk) { "✅ OK" } else { "❌ FAILED" }
             $tgMsg  = "🚀 <b>Launcher Status</b> (run number $runNum)$nl" +
-                      "━━━━━━━━━━━━━━━━━━━━━$nl" +
-                      "📦 <b>Launcher:</b> $status$nl" +
-                      "💾 <b>save.txt:</b> $(if (-not [string]::IsNullOrEmpty($rcloneConfig)) { '✅' } else { '⚠️ missing' })$nl" +
-                      "📄 <b>info.txt:</b> $(if (-not [string]::IsNullOrEmpty($l1)) { '✅' } else { '⚠️ missing' })$nl" +
-                      "🔑 <b>token.txt:</b> $(if (-not [string]::IsNullOrEmpty($token)) { '✅' } else { '⚠️ missing' })$nl" +
-                      "🖥️ <b>Shortcuts:</b> $(if ($launcherOk) { '✅ SETUP + SAVE' } else { '⚠️ not created' })$nl" +
-                      "━━━━━━━━━━━━━━━━━━━━━"
+            "━━━━━━━━━━━━━━━━━━━━━$nl" +
+            "📦 <b>Launcher:</b> $status$nl" +
+            "💾 <b>save.txt:</b> $(if (-not [string]::IsNullOrEmpty($rcloneConfig)) { '✅' } else { '⚠️ missing' })$nl" +
+            "📄 <b>info.txt:</b> $(if (-not [string]::IsNullOrEmpty($l1)) { '✅' } else { '⚠️ missing' })$nl" +
+            "🔑 <b>token.txt:</b> $(if (-not [string]::IsNullOrEmpty($token)) { '✅' } else { '⚠️ missing' })$nl" +
+            "🖥️ <b>Shortcuts:</b> $(if ($launcherOk) { '✅ SETUP + SAVE' } else { '⚠️ not created' })$nl" +
+            "━━━━━━━━━━━━━━━━━━━━━"
             $tgBody  = @{ chat_id = $tgChatId; text = $tgMsg; parse_mode = "HTML" } | ConvertTo-Json -Compress
             $tgBytes = [System.Text.Encoding]::UTF8.GetBytes($tgBody)
             try {
@@ -426,9 +444,7 @@ Write-Output "ZIPPED: $($folder.Name) -> $zipName ($zipSizeMB MB)"
             function Wait-TailscaleReady {
               param([string]$Label = "")
               Write-Host "⏳ Polling Tailscale ($Label) every 500ms — no timeout..."
-              $timeout = New-TimeSpan -Minutes 10
-              $start = Get-Date
-              while ((Get-Date) - $start -lt $timeout) {
+              while ($true) {
                 Start-Sleep -Milliseconds 500
                 try {
                   $j = & $tsExe status --json 2>&1 | Out-String
@@ -450,8 +466,6 @@ Write-Output "ZIPPED: $($folder.Name) -> $zipName ($zipSizeMB MB)"
                   }
                 } catch { }
               }
-              Write-Host "❌ Timeout waiting for Tailscale"
-              return "Timeout"
             }
             $authKey      = "$env:TAILSCALE_AUTHKEY"
             $keyMissing   = [string]::IsNullOrEmpty($authKey)
@@ -526,15 +540,15 @@ Write-Output "ZIPPED: $($folder.Name) -> $zipName ($zipSizeMB MB)"
           Write-Host "✅ Session info written"
           $envFile = "C:\Users\Public\bot\.env"
           $envLines = @(
-            "DISCORD_BOT_TOKEN=$env:DISCORD_BOT_TOKEN",
-            "DISCORD_CHANNEL_ID=$env:DISCORD_CHANNEL_ID",
-            "DISCORD_WEBHOOK_URL=$env:DISCORD_WEBHOOK_URL",
-            "TELEGRAM_API_ID=$env:TELEGRAM_API_ID",
-            "TELEGRAM_API_HASH=$env:TELEGRAM_API_HASH",
-            "TELEGRAM_BOT_TOKEN=$env:TELEGRAM_BOT_TOKEN",
-            "TELEGRAM_CHANNEL_ID=$env:TELEGRAM_CHANNEL_ID",
-            "TAILSCALE_AUTHKEY=$env:TAILSCALE_AUTHKEY",
-            "RUN_NUMBER=$env:RUN_NUMBER"
+          "DISCORD_BOT_TOKEN=$env:DISCORD_BOT_TOKEN",
+          "DISCORD_CHANNEL_ID=$env:DISCORD_CHANNEL_ID",
+          "DISCORD_WEBHOOK_URL=$env:DISCORD_WEBHOOK_URL",
+          "TELEGRAM_API_ID=$env:TELEGRAM_API_ID",
+          "TELEGRAM_API_HASH=$env:TELEGRAM_API_HASH",
+          "TELEGRAM_BOT_TOKEN=$env:TELEGRAM_BOT_TOKEN",
+          "TELEGRAM_CHANNEL_ID=$env:TELEGRAM_CHANNEL_ID",
+          "TAILSCALE_AUTHKEY=$env:TAILSCALE_AUTHKEY",
+          "RUN_NUMBER=$env:RUN_NUMBER"
           )
           $envLines | Set-Content -Path $envFile -Encoding UTF8 -Force
           Write-Host "✅ .env file written for bot subprocess"
@@ -579,12 +593,11 @@ Write-Output "ZIPPED: $($folder.Name) -> $zipName ($zipSizeMB MB)"
           $botProc = Start-Bot
           Write-Host "🟢 Bot PID: $($botProc.Id)"
           $maxRestarts = 5
-          $sessionEnd = (Get-Date).AddMinutes(350) # تقريباً 5 ساعات و 50 دقيقة لترك مهلة
-          while ((Get-Date) -lt $sessionEnd) {
+          while ($true) {
             Start-Sleep -Seconds 5
             [System.IO.File]::WriteAllText($heartbeatFile,
-              "alive: $(Get-Date -Format 'HH:mm:ss') | restarts: $restartCount | bot: $(if (-not $botProc.HasExited) { 'running' } else { 'restarting' })",
-              [System.Text.Encoding]::UTF8)
+            "alive: $(Get-Date -Format 'HH:mm:ss') | restarts: $restartCount | bot: $(if (-not $botProc.HasExited) { 'running' } else { 'restarting' })",
+            [System.Text.Encoding]::UTF8)
             $loopElapsed = (New-TimeSpan -Start $startTime -End (Get-Date)).TotalSeconds
             if ($loopElapsed % 30 -lt 5) {
               $polPath  = "HKLM:\Software\Policies\Google\Chrome"
@@ -658,45 +671,45 @@ Write-Output "ZIPPED: $($folder.Name) -> $zipName ($zipSizeMB MB)"
           $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
           if (-not $manifest.Success -or -not $manifest.Files) { exit 0 }
           $uploadCode = @'
-const { TelegramClient } = require('telegram');
-const { StringSession } = require('telegram/sessions');
-const fs = require('fs'); const path = require('path');
-const apiId = parseInt(process.env.TELEGRAM_API_ID);
-const apiHash = process.env.TELEGRAM_API_HASH;
-const botToken = process.env.TELEGRAM_BOT_TOKEN;
-const channelId = process.env.TELEGRAM_CHANNEL_ID;
-const mPath = path.join(process.env.TEMP, 'backup_output', 'backup_manifest.json');
-if (!fs.existsSync(mPath)) process.exit(0);
-const m = JSON.parse(fs.readFileSync(mPath, 'utf8'));
-if (!m.Files || !m.Files.length) process.exit(0);
-(async () => {
-let sd = ''; try { if (fs.existsSync('C:\\Users\\Public\\tg_session.dat')) sd = fs.readFileSync('C:\\Users\\Public\\tg_session.dat', 'utf8').trim(); } catch(_) {}
-const c = new TelegramClient(new StringSession(sd), apiId, apiHash, { connectionRetries: 5 });
-await c.start({ botAuthToken: botToken });
-let e = null;
-try { e = await c.getEntity(channelId); } catch (_) { if (/^\d+$/.test(channelId)) try { e = await c.getEntity('-100' + channelId); } catch (_) {} }
-if (!e) process.exit(1);
-let ok = 0, fa = 0;
-for (const f of m.Files) {
-if (!fs.existsSync(f.Path)) { fa++; continue; }
-let u = false;
-for (let a = 1; a <= 3 && !u; a++) {
-try {
-await c.sendFile(e, { file: f.Path, caption: 'Backup: ' + f.Folder + String.fromCharCode(10) + 'File: ' + f.Name, forceDocument: true, fileName: f.Name, workers: 4 });
-ok++; u = true; try { fs.unlinkSync(f.Path); } catch (_) {}
-} catch (err) {
-const mg = err.errorMessage || err.message || '';
-if (mg.includes('FLOOD_WAIT')) await new Promise(r => setTimeout(r, parseInt((mg.match(/\d+/) || ['30'])[0]) * 1000));
-else await new Promise(r => setTimeout(r, a * 3000));
-}
-}
-if (!u) fa++;
-}
-try { await c.sendMessage(e, { message: '🏁 Final: ' + ok + ' ok, ' + fa + ' failed', parseMode: 'html' }); } catch (_) {}
-await c.disconnect();
-process.exit(fa > 0 ? 1 : 0);
-})();
-'@
+          const { TelegramClient } = require('telegram');
+          const { StringSession } = require('telegram/sessions');
+          const fs = require('fs'); const path = require('path');
+          const apiId = parseInt(process.env.TELEGRAM_API_ID);
+          const apiHash = process.env.TELEGRAM_API_HASH;
+          const botToken = process.env.TELEGRAM_BOT_TOKEN;
+          const channelId = process.env.TELEGRAM_CHANNEL_ID;
+          const mPath = path.join(process.env.TEMP, 'backup_output', 'backup_manifest.json');
+          if (!fs.existsSync(mPath)) process.exit(0);
+          const m = JSON.parse(fs.readFileSync(mPath, 'utf8'));
+          if (!m.Files || !m.Files.length) process.exit(0);
+          (async () => {
+          let sd = ''; try { if (fs.existsSync('C:\\Users\\Public\\tg_session.dat')) sd = fs.readFileSync('C:\\Users\\Public\\tg_session.dat', 'utf8').trim(); } catch(_) {}
+          const c = new TelegramClient(new StringSession(sd), apiId, apiHash, { connectionRetries: 5 });
+          await c.start({ botAuthToken: botToken });
+          let e = null;
+          try { e = await c.getEntity(channelId); } catch (_) { if (/^\d+$/.test(channelId)) try { e = await c.getEntity('-100' + channelId); } catch (_) {} }
+          if (!e) process.exit(1);
+          let ok = 0, fa = 0;
+          for (const f of m.Files) {
+          if (!fs.existsSync(f.Path)) { fa++; continue; }
+          let u = false;
+          for (let a = 1; a <= 3 && !u; a++) {
+          try {
+          await c.sendFile(e, { file: f.Path, caption: 'Backup: ' + f.Folder + String.fromCharCode(10) + 'File: ' + f.Name, forceDocument: true, fileName: f.Name, workers: 4 });
+          ok++; u = true; try { fs.unlinkSync(f.Path); } catch (_) {}
+          } catch (err) {
+          const mg = err.errorMessage || err.message || '';
+          if (mg.includes('FLOOD_WAIT')) await new Promise(r => setTimeout(r, parseInt((mg.match(/\d+/) || ['30'])[0]) * 1000));
+          else await new Promise(r => setTimeout(r, a * 3000));
+          }
+          }
+          if (!u) fa++;
+          }
+          try { await c.sendMessage(e, { message: '🏁 Final: ' + ok + ' ok, ' + fa + ' failed', parseMode: 'html' }); } catch (_) {}
+          await c.disconnect();
+          process.exit(fa > 0 ? 1 : 0);
+          })();
+          '@
           Set-Content -Path "C:\Users\Public\final_upload.js" -Value $uploadCode -Encoding UTF8 -Force
           Start-Process -FilePath "node" -ArgumentList "C:\Users\Public\final_upload.js" -WorkingDirectory "C:\Users\Public" -NoNewWindow -PassThru -Wait | Out-Null
           Remove-Item "C:\Users\Public\final_upload.js" -Force -ErrorAction SilentlyContinue
