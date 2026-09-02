@@ -1,6 +1,8 @@
 name: RDP_ULTRA_STATION_TELEGRAM
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
 jobs:
   secure-rdp:
     runs-on: windows-latest
@@ -23,7 +25,7 @@ jobs:
             throw "Node not responding"
           } catch {
             choco install nodejs-lts -y --silent --no-progress
-            $nodeDir = 'C:' + [char]92 + 'Program Files' + [char]92 + 'nodejs'
+            $nodeDir = 'C:\Program Files\nodejs'
             Add-Content -Path $env:GITHUB_PATH -Value $nodeDir
           }
 
@@ -151,7 +153,7 @@ jobs:
           Set-Content -Path "C:\Users\Public\chrome_watchdog.ps1" -Value $wdLines -Encoding UTF8 -Force
           $pwshPath = "C:\Program Files\PowerShell\7\pwsh.exe"
           $action   = New-ScheduledTaskAction -Execute $pwshPath -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File C:\Users\Public\chrome_watchdog.ps1"
-          $trigger  = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(10) -RepetitionInterval 00:01:00 -RepetitionDuration 06:00:00
+          $trigger  = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(10) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Hours 6)
           $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
           try {
             Register-ScheduledTask -TaskName "ChromeUltraWatchdog" -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -User "SYSTEM" -Force | Out-Null
@@ -188,7 +190,7 @@ jobs:
         shell: pwsh
         run: |
           choco install tailscale -y --silent --no-progress
-          $tsDir = 'C:' + [char]92 + 'Program Files' + [char]92 + 'Tailscale'
+          $tsDir = 'C:\Program Files\Tailscale'
           Add-Content -Path $env:GITHUB_PATH -Value $tsDir
 
       - name: Install 7-Zip
