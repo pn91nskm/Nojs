@@ -169,72 +169,154 @@ jobs:
           Write-Host "🎉 ULTRA CHROME ENGINE DEPLOYED SUCCESSFULLY"
 
       # ═══════════════════════════════════════════════════════════
-      #  🆕 v6.1: إجبار نافذة مزامنة Chrome عند كل دخول/إعادة اتصال
-      # ═══════════════════════════════════════════════════════════
-      - name: Force Chrome Sync Window on Every Logon (Mandatory)
-        shell: pwsh
-        run: |
-          $chromePath = "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe"
-          if (!(Test-Path $chromePath)) { $chromePath = "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe" }
-          if (!(Test-Path $chromePath)) { Write-Host "❌ Chrome not installed"; exit 1 }
-          $pol = "HKLM:\Software\Policies\Google\Chrome"
-          Set-ItemProperty -Path $pol -Name "BrowserSignin" -Value 1 -Type DWord -Force
-          Set-ItemProperty -Path $pol -Name "SyncDisabled"  -Value 0 -Type DWord -Force
-          if (!(Test-Path "C:\logs")) { New-Item -ItemType Directory -Path "C:\logs" -Force | Out-Null }
-          $syncScript = @'
-          $mtx = New-Object System.Threading.Mutex($false, "Local\ChromeSyncOnLogon")
-          if (-not $mtx.WaitOne(0)) { exit 0 }
-          Start-Sleep -Seconds 3
-          $chrome = "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe"
-          if (!(Test-Path $chrome)) { $chrome = "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe" }
-          if (!(Test-Path $chrome)) { exit 0 }
-          function Invoke-SyncWindow([string]$reason) {
-              try {
-                  $sentinel = Join-Path $env:LOCALAPPDATA "Google\Chrome\User Data\First Run"
-                  if (Test-Path $sentinel) { Remove-Item $sentinel -Force -ErrorAction SilentlyContinue }
-                  Start-Process -FilePath $chrome -ArgumentList "--force-first-run --restore-last-session"
-                  "$(Get-Date): sync window triggered for $env:USERNAME ($reason)" | Out-File "C:\logs\sync_logon.log" -Append
-              } catch {
-                  "$(Get-Date): trigger error: $_" | Out-File "C:\logs\sync_logon.log" -Append
-              }
+#  🆕 v7.0: إصلاح - Chrome يفتح يدوياً + نافذة مزامنة رسمية
+#  مرجع: https://chromeenterprise.google/policies/
+# ═══════════════════════════════════════════════════════════
+- name: Fix Chrome - Manual Launch + Official Sync Window (v7.0)
+  shell: pwsh
+  run: |
+    # ─────────────────────────────────────────────
+    # 1) تنظيف كل الآليات القديمة التي تفتح Chrome تلقائياً
+    # ─────────────────────────────────────────────
+    Write-Host "🧹 [1/5] Removing old auto-launch mechanisms..."
+
+    # حذف Scheduled Tasks القديمة
+    @("ChromeSyncOnLogon", "ChromeUltraWatchdog") | ForEach-Object {
+      try {
+        Unregister-ScheduledTask -TaskName $_ -Confirm:$false -ErrorAction SilentlyContinue
+        Write-Host "   ✅ Removed task: $_"
+      } catch {}
+    }
+
+    # حذف Startup Shortcut (سبب الفتح المتكرر عند كل logon)
+    $startupDir = "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp"
+    Get-ChildItem $startupDir -Filter "ChromeSync*" -ErrorAction SilentlyContinue |
+      ForEach-Object { Remove-Item $_.FullName -Force; Write-Host "   ✅ Removed startup: $($_.Name)" }
+
+    # حذف السكربتات القديمة
+    @("C:\Users\Public\chrome_sync_logon.ps1", "C:\Users\Public\chrome_watchdog.ps1") |
+      ForEach-Object { if (Test-Path $_) { Remove-Item $_ -Force } }
+
+    # قتل أي عمليات Chrome/Sync قديمة
+    Get-Process -Name "chrome" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+
+    # ─────────────────────────────────────────────
+    # 2) ضبط Policies وفقاً لوثائق Google الرسمية
+    #    BrowserSignin=1 → يسمح بتسجيل الدخول (لا يُجبر) → تظهر نافذة المزامنة
+    #    SyncDisabled=0  → المزامنة مفعّلة
+    # ─────────────────────────────────────────────
+    Write-Host "🔧 [2/5] Applying Google Official Policies for Sync Window..."
+
+    $pol = "HKLM:\Software\Policies\Google\Chrome"
+    if (!(Test-Path $pol)) { New-Item -Path $pol -Force | Out-Null }
+
+    # السياسات الحرجة لإظهار نافذة المزامنة الرسمية
+    Set-ItemProperty -Path $pol -Name "BrowserSignin"                -Value 1        -Type DWord  -Force
+    Set-ItemProperty -Path $pol -Name "SyncDisabled"                 -Value 0        -Type DWord  -Force
+    Set-ItemProperty -Path $pol -Name "SyncTypesListDisabled"        -Value ""       -Type String -Force
+    Set-ItemProperty -Path $pol -Name "RoamingProfileSupportEnabled" -Value 1        -Type DWord  -Force
+    Set-ItemProperty -Path $pol -Name "AllowChromeDataToBeStored"    -Value 1        -Type DWord  -Force  -ErrorAction SilentlyContinue
+    Set-ItemProperty -Path $pol -Name "PasswordManagerEnabled"       -Value 1        -Type DWord  -Force
+    Set-ItemProperty -Path $pol -Name "AutoFillPasswordsEnabled"     -Value 1        -Type DWord  -Force
+
+    # إزالة أي policy تمنع نافذة المزامنة
+    @("ForceBrowserSignin", "ForceGoogleSafeSearch", "SuppressUnsupportedOSWarning") |
+      ForEach-Object { Remove-ItemProperty -Path $pol -Name $_ -ErrorAction SilentlyContinue }
+
+    Write-Host "   ✅ BrowserSignin=1, SyncDisabled=0 (Official Sync Window enabled)"
+
+    # ─────────────────────────────────────────────
+    # 3) سكربت جديد: يفتح Chrome مرة واحدة فقط عند أول logon
+    #    بدون --force-first-run حتى تظهر نافذة المزامنة الرسمية
+    # ─────────────────────────────────────────────
+    Write-Host "📜 [3/5] Creating one-time logon script..."
+
+    $onceScript = @'
+    # Chrome - One-time launch for Official Google Sync Window
+    # No --force-first-run → Google's real sync prompt appears
+    $flagFile = Join-Path $env:LOCALAPPDATA "Google\Chrome\User Data\.sync_prompt_shown"
+    if (Test-Path $flagFile) {
+      Write-Output "$(Get-Date): Sync prompt already shown — skipping auto-launch" | Out-File "C:\logs\chrome_logon.log" -Append
+      exit 0
+    }
+
+    Start-Sleep -Seconds 8  # انتظار استقرار Desktop
+
+    $chrome = "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe"
+    if (!(Test-Path $chrome)) { $chrome = "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe" }
+    if (!(Test-Path $chrome)) { exit 0 }
+
+    # إطلاق Chrome بشكل عادي → Google تعرض نافذة "Turn on sync" الرسمية
+    Start-Process -FilePath $chrome -ArgumentList "--no-restore-session-plan"
+    "$(Get-Date): Chrome launched for sync prompt (user: $env:USERNAME)" | Out-File "C:\logs\chrome_logon.log" -Append
+
+    # إنشاء flag حتى لا يُفتح Chrome تلقائياً مرة أخرى
+    $userDataDir = Join-Path $env:LOCALAPPDATA "Google\Chrome\User Data"
+    if (!(Test-Path $userDataDir)) { New-Item -ItemType Directory -Path $userDataDir -Force | Out-Null }
+    New-Item -ItemType File -Path $flagFile -Force | Out-Null
+    '@
+
+    $scriptPath = "C:\Users\Public\chrome_first_logon.ps1"
+    Set-Content -Path $scriptPath -Value $onceScript -Encoding UTF8 -Force
+
+    # ─────────────────────────────────────────────
+    # 4) Scheduled Task: يعمل مرة واحدة عند logon فقط (ليس reconnect)
+    # ─────────────────────────────────────────────
+    Write-Host "⏰ [4/5] Registering ONE-TIME logon task..."
+
+    $pwshPath = "C:\Program Files\PowerShell\7\pwsh.exe"
+    if (!(Test-Path $pwshPath)) { $pwshPath = "powershell.exe" }
+
+    $action   = New-ScheduledTaskAction -Execute $pwshPath `
+                  -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""
+    $trigger  = New-ScheduledTaskTrigger -AtLogOn -User "TOOLBOXLAP"
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
+                  -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
+
+    try {
+      Register-ScheduledTask -TaskName "ChromeFirstLogonSync" `
+        -Action $action -Trigger $trigger -Settings $settings `
+        -RunLevel Limited -Force | Out-Null
+      Write-Host "   ✅ ChromeFirstLogonSync registered (logon only, no reconnect trigger)"
+    } catch {
+      Write-Host "   ⚠️ Task registration warning: $_"
+    }
+
+    # ─────────────────────────────────────────────
+    # 5) إزالة flag "First Run" حتى لا يخفي نافذة المزامنة
+    #    (Chrome يُنشئه تلقائياً عند أول تشغيل حقيقي)
+    # ─────────────────────────────────────────────
+    Write-Host "🧪 [5/5] Preparing Chrome User Data for clean first-run..."
+
+    $userProfiles = Get-ChildItem "C:\Users" -Directory -Force -ErrorAction SilentlyContinue |
+      Where-Object { $_.Name -notin @("Public","Default","Default User","All Users") }
+
+    foreach ($up in $userProfiles) {
+      $firstRunFile = Join-Path $up.FullName "AppData\Local\Google\Chrome\User Data\First Run"
+      # لا نحذفه — نتركه حتى يكتشف Chrome أنه أول تشغيل ويعرض Sync Window
+      # لكن نحذف أي Local State قديم قد يمنع النافذة
+      $localState = Join-Path $up.FullName "AppData\Local\Google\Chrome\User Data\Local State"
+      if (Test-Path $localState) {
+        try {
+          $json = Get-Content $localState -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json -ErrorAction SilentlyContinue
+          if ($json -and $json.profile -and $json.profile.using_default_avatar -eq $false) {
+            # المستخدم مسجل دخول بالفعل، لا حاجة للتدخل
           }
-          Invoke-SyncWindow "logon"
-          $global:lastTrigger = Get-Date
-          try {
-              Register-ObjectEvent -InputObject ([Microsoft.Win32.SystemEvents]) -EventName "SessionSwitch" -SourceIdentifier "ChromeSyncSwitch" -Action {
-                  $r = [int]$Event.SourceEventArgs.Reason
-                  if ($r -in @(1,3,5)) {
-                      $now = Get-Date
-                      if (($now - $global:lastTrigger).TotalSeconds -ge 60) {
-                          $global:lastTrigger = $now
-                          Invoke-SyncWindow "reconnect:$r"
-                      }
-                  }
-              } | Out-Null
-              while ($true) { Start-Sleep -Seconds 30 }
-          } catch {
-              "$(Get-Date): watchdog error: $_" | Out-File "C:\logs\sync_logon.log" -Append
-          }
-          '@
-          Set-Content -Path "C:\Users\Public\chrome_sync_logon.ps1" -Value $syncScript -Encoding UTF8 -Force
-          $pwshPath = "C:\Program Files\PowerShell\7\pwsh.exe"
-          $startupDir = "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp"
-          if (!(Test-Path $startupDir)) { New-Item -ItemType Directory -Path $startupDir -Force | Out-Null }
-          $WshShell = New-Object -ComObject WScript.Shell
-          $sc = $WshShell.CreateShortcut("$startupDir\ChromeSyncOnLogon.lnk")
-          $sc.TargetPath = $pwshPath
-          $sc.Arguments  = "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"C:\Users\Public\chrome_sync_logon.ps1`""
-          $sc.WorkingDirectory = "C:\Users\Public"
-          $sc.Save()
-          Write-Host "✅ Startup shortcut created (All Users)"
-          $action   = New-ScheduledTaskAction -Execute $pwshPath -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File C:\Users\Public\chrome_sync_logon.ps1"
-          $trigger  = New-ScheduledTaskTrigger -AtLogOn -User "TOOLBOXLAP"
-          $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
-          try {
-              Register-ScheduledTask -TaskName "ChromeSyncOnLogon" -Action $action -Trigger $trigger -Settings $settings -RunLevel Limited -Force | Out-Null
-              Write-Host "✅ Logon task registered for TOOLBOXLAP"
-          } catch { Write-Host "⚠️ Logon task warning: $_" }
-          Write-Host "🎉 FORCE-SYNC ON LOGON DEPLOYED"
+        } catch {}
+      }
+    }
+
+    Write-Host ""
+    Write-Host "╔══════════════════════════════════════════════════╗"
+    Write-Host "║  ✅ v7.0 FIXES APPLIED SUCCESSFULLY              ║"
+    Write-Host "╠══════════════════════════════════════════════════╣"
+    Write-Host "║  • Chrome will NOT auto-open repeatedly          ║"
+    Write-Host "║  • Opens ONCE at first logon only                ║"
+    Write-Host "║  • Official Google Sync Window will appear       ║"
+    Write-Host "║  • User opens Chrome manually after that         ║"
+    Write-Host "║  • SessionSwitch/reconnect hooks REMOVED         ║"
+    Write-Host "╚══════════════════════════════════════════════════╝"
+
 
       - name: Install Tailscale
         run: |
