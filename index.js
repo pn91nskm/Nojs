@@ -1,10 +1,11 @@
 /**
-RDP Ultra Bot v6.2 - Production Grade
+RDP Ultra Bot v6.3 - Production Grade
 Developed by AlkshwlyHacker | 2026
-v6.2: HTML escaping (root-cause), image fallback via @napi-rs/canvas,
-      single-fire shutdown, PID single-instance, Discord EDIT-not-resend
+v6.3: FIX root-cause backup failure (escaped Windows paths),
+FIX Telegram callback handlers (UpdateBotCallbackQuery + SetBotCallbackAnswer),
+hardened handler registration (never throws), fail-fast backup script check
 */
-// ← FIX: تحميل .env إذا كان موجود (لضمان وصول البوت للـ secrets كـ subprocess)
+// ← FIX: تحميل .env إذا كان موجوداً (لضمان وصول البوت للـ secrets كـ subprocess)
 try {
   const envPath = require('path').join(__dirname, '.env');
   if (require('fs').existsSync(envPath)) {
@@ -16,6 +17,7 @@ try {
     });
   }
 } catch (_) {}
+
 const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, AttachmentBuilder } = require('discord.js');
 const { TelegramClient, Api } = require('telegram');
 const { StringSession } = require('telegram/sessions');
@@ -24,52 +26,57 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const http = require('http');
+
 // ═══════════════════════════════════════════════════════
 //  🗂️ UNIFIED SYSTEM LOGGER
 // ═══════════════════════════════════════════════════════
-const LOG_DIR = 'C:\logs';
+const LOG_DIR = 'C:\\logs';
 const LOG_FILE = path.join(LOG_DIR, 'bot.log');
 if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true });
 if (!fs.existsSync(LOG_FILE)) fs.writeFileSync(LOG_FILE, '', 'utf8');
 const Logger = {
-  _write(level, msg, data = null) {
+  write(level, msg, data = null) {
     const ts = new Date().toISOString();
     const line = `[${ts}] [${level}] ${msg}${data ? ' | ' + JSON.stringify(data) : ''}\n`;
     fs.appendFileSync(LOG_FILE, line, 'utf8');
     if (level === 'ERROR') console.error(line.trim());
     else console.log(line.trim());
   },
-  info(msg, data)    { this._write('INFO',    msg, data); },
-  warn(msg, data)    { this._write('WARN',    msg, data); },
-  error(msg, data)   { this._write('ERROR',   msg, data); },
-  success(msg, data) { this._write('SUCCESS', msg, data); }
+  info(msg, data)    { this.write('INFO',    msg, data); },
+  warn(msg, data)    { this.write('WARN',    msg, data); },
+  error(msg, data)   { this.write('ERROR',   msg, data); },
+  success(msg, data) { this.write('SUCCESS', msg, data); }
 };
+
 // ═══════════════════════════════════════════════════════
-//  CONFIGURATION
+//  CONFIGURATION  (v6.3: مسارات مهرَّبة \\ — السبب الجذري لفشل الحفظ)
 // ═══════════════════════════════════════════════════════
 const BOT_TOKEN        = process.env.DISCORD_BOT_TOKEN;
 const CHANNEL_ID       = process.env.DISCORD_CHANNEL_ID;
 const WEBHOOK_URL      = process.env.DISCORD_WEBHOOK_URL;
-const PID_FILE         = 'C:\Users\Public\bot.pid';
-const BACKUP_SCRIPT    = 'C:\Users\Public\backup.ps1';
-const TG_SESSION_FILE  = 'C:\Users\Public\tg_session.dat';
-const TG_PANEL_FILE    = 'C:\Users\Public\tg_panel.dat';
-const TS_STATUS_FILE   = 'C:\Users\Public\tailscale_status.json';
-const TS_EXE           = 'C:\Program Files\Tailscale\tailscale.exe';
-const TELEGRAM_API_ID  = parseInt(process.env.TELEGRAM_API_ID);
-const TELEGRAM_API_HASH    = process.env.TELEGRAM_API_HASH;
-const TELEGRAM_BOT_TOKEN   = process.env.TELEGRAM_BOT_TOKEN;
-const TELEGRAM_CHANNEL     = process.env.TELEGRAM_CHANNEL_ID;
-const TAILSCALE_AUTHKEY    = process.env.TAILSCALE_AUTHKEY;
+const PID_FILE         = 'C:\\Users\\Public\\bot.pid';
+const BACKUP_SCRIPT    = 'C:\\Users\\Public\\backup.ps1';
+const TG_SESSION_FILE  = 'C:\\Users\\Public\\tg_session.dat';
+const TG_PANEL_FILE    = 'C:\\Users\\Public\\tg_panel.dat';
+const TS_STATUS_FILE   = 'C:\\Users\\Public\\tailscale_status.json';
+const TS_EXE           = 'C:\\Program Files\\Tailscale\\tailscale.exe';
+const SESSION_INFO     = 'C:\\Users\\Public\\session_info.json';
+const TELEGRAM_API_ID     = parseInt(process.env.TELEGRAM_API_ID);
+const TELEGRAM_API_HASH   = process.env.TELEGRAM_API_HASH;
+const TELEGRAM_BOT_TOKEN  = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_CHANNEL    = process.env.TELEGRAM_CHANNEL_ID;
+const TAILSCALE_AUTHKEY   = process.env.TAILSCALE_AUTHKEY;
 const WORKFLOW_START       = Date.now();
 const WORKFLOW_TIMEOUT     = 360 * 60 * 1000;
 const ALERT_THRESHOLDS     = [10 * 60 * 1000, 5 * 60 * 1000, 1 * 60 * 1000];
 const firedAlerts          = new Set();
-// ← FIX: Discord أصبح اختياري — البوت يعمل بدونه ويكتفي بـ Telegram
+
+// ← FIX: Discord اختياري — البوت يعمل بدونه ويكتفي بـ Telegram
 const DISCORD_ENABLED = !!(BOT_TOKEN && CHANNEL_ID);
 if (!DISCORD_ENABLED) {
   Logger.warn('Discord credentials missing — running in Telegram-only mode');
 }
+
 // ═══════════════════════════════════════════════════════
 //  v6.2 SINGLE-INSTANCE GUARD (PID)
 // ═══════════════════════════════════════════════════════
@@ -87,6 +94,7 @@ try {
   }
   fs.writeFileSync(PID_FILE, String(process.pid), 'utf8');
 } catch (_) {}
+
 // ═══════════════════════════════════════════════════════
 //  STATE MANAGEMENT
 // ═══════════════════════════════════════════════════════
@@ -97,7 +105,8 @@ let tgClient = null, tgEntity = null, tailscaleIp = 'N/A';
 let statusPending = false, tgPanelMsg = null;
 let lastTgPanelUpdate = 0, lastTgPanelState = '';
 let webhookDead = false, shuttingDown = false;
-let lastTgMsgText = '', lastTgMsgTime = 0; // ← حماية ضد التكرار في رسائل Telegram
+let lastTgMsgText = '', lastTgMsgTime = 0;
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -105,14 +114,17 @@ const client = new Client({
     GatewayIntentBits.MessageContent
   ]
 });
+
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
 function maskSecrets(text) {
   return String(text)
     .replace(/--authkey=\S+/g, '--authkey=***')
     .replace(/tskey-[A-Za-z0-9-]+/g, 'tskey-***')
     .replace(/API key \S+/g, 'API key ***')
-    .replace(/ts[A-Za-z0-9_-]{20,}/g, 'MASKED');
+    .replace(/ts[A-Za-z0-9-]{20,}/g, 'MASKED');
 }
+
 // ═══════════════════════════════════════════════════════
 //  v6.2 HTML SAFETY + IMAGE FALLBACK
 // ═══════════════════════════════════════════════════════
@@ -128,10 +140,10 @@ function mdToHtml(text) {
     .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
     .replace(/`([^`]+)`/g, '<code>$1</code>');
 }
+
 let canvasLib = null;
-try { canvasLib = require('@napi-rs/canvas'); } catch (_) {
-  Logger.warn('canvas lib unavailable — image fallback disabled');
-}
+try { canvasLib = require('@napi-rs/canvas'); } catch (_) { Logger.warn('canvas lib unavailable — image fallback disabled'); }
+
 function wrapLine(line, max) {
   if (line.length <= max) return [line];
   const out = [];
@@ -143,6 +155,7 @@ function wrapLine(line, max) {
   if (cur.trim()) out.push(cur.trim());
   return out;
 }
+
 function textToImageBuffer(text) {
   if (!canvasLib) return null;
   try {
@@ -168,6 +181,7 @@ function textToImageBuffer(text) {
     return null;
   }
 }
+
 // ═══════════════════════════════════════════════════════
 //  UTILITY FUNCTIONS
 // ═══════════════════════════════════════════════════════
@@ -197,13 +211,8 @@ function sendDiscordWebhook(content) {
             resolve(false);
             return;
           }
-          if (res.statusCode >= 200 && res.statusCode < 300) {
-            Logger.success('Discord webhook sent');
-            resolve(true);
-          } else {
-            Logger.warn('Discord webhook failed', { status: res.statusCode });
-            resolve(false);
-          }
+          if (res.statusCode >= 200 && res.statusCode < 300) { Logger.success('Discord webhook sent'); resolve(true); }
+          else { Logger.warn('Discord webhook failed', { status: res.statusCode }); resolve(false); }
         });
       });
       req.on('error', e => { Logger.error('Webhook error', { msg: e.message }); resolve(false); });
@@ -215,6 +224,7 @@ function sendDiscordWebhook(content) {
     }
   });
 }
+
 function getTailscaleStatus() {
   let fullJson = '', textStatus = '', ip = null, backendState = 'Unknown', authUrl = null;
   try {
@@ -223,18 +233,28 @@ function getTailscaleStatus() {
     backendState = st.BackendState || 'Unknown';
     authUrl = st.AuthURL || null;
     if (st.Self && st.Self.TailscaleIPs && st.Self.TailscaleIPs.length > 0) ip = st.Self.TailscaleIPs[0];
-  } catch (e) { Logger.warn('Tailscale JSON parse failed', { msg: e.message }); }
-  try { textStatus = execSync('"' + TS_EXE + '" status', { encoding: 'utf8' }); } catch (_) { textStatus = ''; }
+  } catch (e) {
+    Logger.warn('Tailscale JSON parse failed', { msg: e.message });
+  }
+  try {
+    textStatus = execSync('"' + TS_EXE + '" status', { encoding: 'utf8' });
+  } catch (_) { textStatus = ''; }
   return { fullJson, textStatus, ip, backendState, authUrl };
 }
+
 function captureTailscaleStatus() {
   const { fullJson } = getTailscaleStatus();
   if (fullJson) {
-    try { fs.writeFileSync(TS_STATUS_FILE, fullJson.trim(), 'utf8'); return true; }
-    catch (e) { Logger.error('Write TS status failed', { msg: e.message }); }
+    try {
+      fs.writeFileSync(TS_STATUS_FILE, fullJson.trim(), 'utf8');
+      return true;
+    } catch (e) {
+      Logger.error('Write TS status failed', { msg: e.message });
+    }
   }
   return false;
 }
+
 async function sendStatusFileToBoth() {
   if (!fs.existsSync(TS_STATUS_FILE)) return;
   if (tgClient && tgEntity) {
@@ -252,6 +272,7 @@ async function sendStatusFileToBoth() {
   }
   updatePanel();
 }
+
 // ═══════════════════════════════════════════════════════
 //  TELEGRAM CONNECTION
 // ═══════════════════════════════════════════════════════
@@ -263,7 +284,10 @@ async function initTelegramConnection() {
       try { if (fs.existsSync(TG_SESSION_FILE)) sd = fs.readFileSync(TG_SESSION_FILE, 'utf8').trim(); } catch (_) {}
       const inst = new TelegramClient(new StringSession(sd), TELEGRAM_API_ID, TELEGRAM_API_HASH, { connectionRetries: 5 });
       await inst.start({ botAuthToken: TELEGRAM_BOT_TOKEN });
-      try { const s = inst.session.save(); if (s && s.length > 10) fs.writeFileSync(TG_SESSION_FILE, s, 'utf8'); } catch (_) {}
+      try {
+        const s = inst.session.save();
+        if (s && s.length > 10) fs.writeFileSync(TG_SESSION_FILE, s, 'utf8');
+      } catch (_) {}
       Logger.success('Telegram connected successfully');
       return inst;
     } catch (err) {
@@ -274,6 +298,7 @@ async function initTelegramConnection() {
   Logger.error('Telegram connection failed after 5 attempts');
   return null;
 }
+
 async function resolveChannelEntity(inst) {
   if (!TELEGRAM_CHANNEL) return null;
   try { return await inst.getEntity(TELEGRAM_CHANNEL); } catch (_) {}
@@ -283,10 +308,10 @@ async function resolveChannelEntity(inst) {
   Logger.warn('Telegram entity resolution failed');
   return null;
 }
-// v6.2: محاولة HTML مهرب → عند فشل parsing تُرسل الرسالة كصورة → ثم نص خام
+
+// v6.2: محاولة HTML مهرَّب → عند فشل parsing تُرسل الرسالة كصورة → ثم نص خام
 async function sendTelegramMsg(htmlText, maxRetries, plainText) {
   if (!tgClient || !tgEntity) return false;
-  // ← منع إرسال نفس الرسالة أكثر من مرة خلال 10 ثوانٍ (يحل مشكلة التكرار)
   const now = Date.now();
   if (htmlText === lastTgMsgText && (now - lastTgMsgTime) < 10000) {
     Logger.warn('Duplicate TG message suppressed', { text: htmlText.substring(0, 60) });
@@ -301,10 +326,7 @@ async function sendTelegramMsg(htmlText, maxRetries, plainText) {
       return true;
     } catch (err) {
       const m = err.errorMessage || err.message || '';
-      if (m.includes('FLOOD_WAIT')) {
-        await sleep(parseInt((m.match(/\d+/) || ['30'])[0]) * 1000);
-        continue;
-      }
+      if (m.includes('FLOOD_WAIT')) { await sleep(parseInt((m.match(/\d+/) || ['30'])[0]) * 1000); continue; }
       if (/parse|entit|HTML/i.test(m)) break;
       if (i < 2) await sleep([2000, 4000][i] || 2000);
     }
@@ -325,6 +347,7 @@ async function sendTelegramMsg(htmlText, maxRetries, plainText) {
   }
   return false;
 }
+
 function persistPanelId(id) {
   try { fs.writeFileSync(TG_PANEL_FILE, String(id), 'utf8'); } catch (_) {}
 }
@@ -337,6 +360,7 @@ function loadPanelId() {
   } catch (_) {}
   return null;
 }
+
 // ═══════════════════════════════════════════════════════
 //  CONNECTION MESSAGE
 // ═══════════════════════════════════════════════════════
@@ -353,39 +377,39 @@ async function sendConnectionMessage(sessionInfo) {
   let msg;
   if (status === 'NeedsLogin' || ip === 'N/A') {
     if (authUrl) {
-      msg = '⚠️ **Tailscale Requires Authentication**\n━━━━━━━━━━━━━━━━━━━━━\n' +
-            '🔗 **Auth URL:** ' + authUrl + '\n' +
-            '🖥️ **Hostname:** ' + hostname + '\n' +
-            '🌐 **Public IP:** ' + publicIp + '\n' +
-            '👤 **RDP User:** ' + rdpUser + '\n' +
-            '🔑 **Password:** ' + rdpPassword + '\n' +
-            '📡 **Status:** ' + status + '\n' +
-            '🕐 **Time:** ' + time + '\n' +
-            '━━━━━━━━━━━━━━━━━━━━━\n' +
-            '👉 **Open the Auth URL above to authenticate**';
+      msg = '⚠️ Tailscale Requires Authentication\n━━━━━━━━━━━━━━━━━━━━━\n' +
+        '🔗 Auth URL: ' + authUrl + '\n' +
+        '🖥️ Hostname: ' + hostname + '\n' +
+        '🌐 Public IP: ' + publicIp + '\n' +
+        '👤 RDP User: ' + rdpUser + '\n' +
+        '🔑 Password: ' + rdpPassword + '\n' +
+        '📡 Status: ' + status + '\n' +
+        '🕐 Time: ' + time + '\n' +
+        '━━━━━━━━━━━━━━━━━━━━━\n' +
+        '👉 Open the Auth URL above to authenticate';
     } else {
-      msg = '❌ **Tailscale Auth Failed**\n━━━━━━━━━━━━━━━━━━━━━\n' +
-            '🖥️ **Hostname:** ' + hostname + '\n' +
-            '🌐 **Public IP:** ' + publicIp + '\n' +
-            '👤 **RDP User:** ' + rdpUser + '\n' +
-            '🔑 **Password:** ' + rdpPassword + '\n' +
-            '📡 **Status:** ' + status + '\n' +
-            '🕐 **Time:** ' + time + '\n' +
-            '━━━━━━━━━━━━━━━━━━━━━\n' +
-            '⚠️ **Fix:** Check TAILSCALE_AUTHKEY secret';
+      msg = '❌ Tailscale Auth Failed\n━━━━━━━━━━━━━━━━━━━━━\n' +
+        '🖥️ Hostname: ' + hostname + '\n' +
+        '🌐 Public IP: ' + publicIp + '\n' +
+        '👤 RDP User: ' + rdpUser + '\n' +
+        '🔑 Password: ' + rdpPassword + '\n' +
+        '📡 Status: ' + status + '\n' +
+        '🕐 Time: ' + time + '\n' +
+        '━━━━━━━━━━━━━━━━━━━━━\n' +
+        '⚠️ Fix: Check TAILSCALE_AUTHKEY secret';
     }
   } else {
-    msg = '🖥️ **RDP SESSION READY**\n━━━━━━━━━━━━━━━━━━━━━\n' +
-          '🔗 **Tailscale IP:** ' + ip + '\n' +
-          '🖥️ **Hostname:** ' + hostname + '\n' +
-          '🌐 **Public IP:** ' + publicIp + '\n' +
-          '👤 **RDP User:** ' + rdpUser + '\n' +
-          '🔑 **Password:** ' + rdpPassword + '\n' +
-          '🔌 **RDP Port:** 3389\n' +
-          '📡 **Status:** ' + status + '\n' +
-          '🕐 **Time:** ' + time + '\n' +
-          '━━━━━━━━━━━━━━━━━━━━━\n' +
-          '👉 Connect via: `mstsc /v:' + ip + '`';
+    msg = '🖥️ RDP SESSION READY\n━━━━━━━━━━━━━━━━━━━━━\n' +
+      '🔗 Tailscale IP: ' + ip + '\n' +
+      '🖥️ Hostname: ' + hostname + '\n' +
+      '🌐 Public IP: ' + publicIp + '\n' +
+      '👤 RDP User: ' + rdpUser + '\n' +
+      '🔑 Password: ' + rdpPassword + '\n' +
+      '🔌 RDP Port: 3389\n' +
+      '📡 Status: ' + status + '\n' +
+      '🕐 Time: ' + time + '\n' +
+      '━━━━━━━━━━━━━━━━━━━━━\n' +
+      '👉 Connect via: `mstsc /v:' + ip + '`';
   }
   let discordOk = false;
   if (WEBHOOK_URL && !webhookDead) {
@@ -406,6 +430,7 @@ async function sendConnectionMessage(sessionInfo) {
   }
   return discordOk || tgOk;
 }
+
 // ═══════════════════════════════════════════════════════
 //  UNIFIED COMMAND HANDLER
 // ═══════════════════════════════════════════════════════
@@ -434,9 +459,9 @@ async function handleCommand(cmd, source, interaction = null) {
       response = '🧹 Temp files cleaned';
     } else if (c === '!status') {
       const remaining = Math.max(0, 360 - Math.floor((Date.now() - WORKFLOW_START) / 60000));
-      response = '**State:** ' + state + '\n**Phase:** ' + currentPhase +
-                 '\n**Saves:** ' + saveCount + '\n**Remaining:** ' + remaining +
-                 ' min\n**Last:** ' + maskSecrets(lastResult);
+      response = 'State: ' + state + '\nPhase: ' + currentPhase +
+        '\nSaves: ' + saveCount + '\nRemaining: ' + remaining +
+        ' min\nLast: ' + maskSecrets(lastResult);
     } else if (c === '!log') {
       if (source === 'discord' && interaction) {
         try {
@@ -467,10 +492,10 @@ async function handleCommand(cmd, source, interaction = null) {
         }
       }
     } else if (c === '!help') {
-      response = '**Available Commands:**\n`!save` - Start backup\n`!cancel` - Cancel operation\n' +
-                 '`!restart` - Restart Tailscale\n`!json` - Send Tailscale JSON\n' +
-                 '`!conn` - Re-send connection message\n`!clean` - Clean temp files\n' +
-                 '`!status` - Show current status\n`!log` - Send bot log file\n`!help` - Show this help';
+      response = 'Available Commands:\n`!save` - Start backup\n`!cancel` - Cancel operation\n' +
+        '`!restart` - Restart Tailscale\n`!json` - Send Tailscale JSON\n' +
+        '`!conn` - Re-send connection message\n`!clean` - Clean temp files\n' +
+        '`!status` - Show current status\n`!log` - Send bot log file\n`!help` - Show this help';
     } else {
       response = '❓ Unknown command. Type `!help` for available commands.';
     }
@@ -487,6 +512,7 @@ async function handleCommand(cmd, source, interaction = null) {
   }
   return response;
 }
+
 // ═══════════════════════════════════════════════════════
 //  TELEGRAM INITIALIZATION
 // ═══════════════════════════════════════════════════════
@@ -506,9 +532,8 @@ async function initializeTelegramAndNotify() {
   if (pid) tgPanelMsg = { id: pid };
   let sessionInfo = null;
   try {
-    const infoPath = 'C:\\Users\\Public\\session_info.json';
-    if (fs.existsSync(infoPath)) {
-      sessionInfo = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
+    if (fs.existsSync(SESSION_INFO)) {
+      sessionInfo = JSON.parse(fs.readFileSync(SESSION_INFO, 'utf8'));
       if (sessionInfo.tailscaleIp) tailscaleIp = sessionInfo.tailscaleIp;
     }
   } catch (e) { Logger.warn('Session info parse failed', { msg: e.message }); }
@@ -519,6 +544,7 @@ async function initializeTelegramAndNotify() {
   await sendStatusFileToBoth();
   await sendTelegramPanel(true);
 }
+
 // ═══════════════════════════════════════════════════════
 //  TELEGRAM PANEL
 // ═══════════════════════════════════════════════════════
@@ -534,10 +560,10 @@ async function sendTelegramPanel(force) {
       '💾 <b>Saves:</b> ' + saveCount + '\n' +
       '🔗 <b>TS IP:</b> <code>' + escapeHtml(tailscaleIp) + '</code>';
     const buttons = [
-      [{ text: '💾 Save',       callback_data: 'btn_save'       }, { text: '🛑 Cancel',  callback_data: 'btn_cancel'   }],
-      [{ text: '🔄 Restart TS', callback_data: 'btn_restart_ts' }, { text: '📊 Status',  callback_data: 'btn_status'   }],
-      [{ text: '📎 JSON',       callback_data: 'btn_json'       }, { text: '📨 Re-send', callback_data: 'btn_conn'     }],
-      [{ text: '📋 Log',        callback_data: 'btn_log'        }, { text: '🧹 Clean',   callback_data: 'btn_clean'    }]
+      [{ text: '💾 Save', callback_data: 'btn_save' }, { text: '🛑 Cancel', callback_data: 'btn_cancel' }],
+      [{ text: '🔄 Restart TS', callback_data: 'btn_restart_ts' }, { text: '📊 Status', callback_data: 'btn_status' }],
+      [{ text: '📎 JSON', callback_data: 'btn_json' }, { text: '📨 Re-send', callback_data: 'btn_conn' }],
+      [{ text: '📋 Log', callback_data: 'btn_log' }, { text: '🧹 Clean', callback_data: 'btn_clean' }]
     ];
     if (tgPanelMsg) {
       try {
@@ -560,6 +586,7 @@ async function sendTelegramPanel(force) {
     Logger.error('TG panel error', { msg: err.message });
   }
 }
+
 async function handleTelegramCallback(callbackData) {
   try {
     switch (callbackData) {
@@ -614,6 +641,7 @@ async function handleTelegramCallback(callbackData) {
     await sendTelegramMsg('❌ Error: ' + escapeHtml(maskSecrets(err.message).substring(0, 80)), 2);
   }
 }
+
 // ═══════════════════════════════════════════════════════
 //  DISCORD EMBED & PANEL (v6.2: EDIT instead of send+delete)
 // ═══════════════════════════════════════════════════════
@@ -623,6 +651,7 @@ function addLog(line) {
   logLines.push('`' + ts + '` ' + maskSecrets(line));
   if (logLines.length > 8) logLines = logLines.slice(-8);
 }
+
 function buildEmbed() {
   const colors = { IDLE: 0x99AAB5, COMPRESSING: 0xFFA500, UPLOADING: 0x3498DB, CANCELLING: 0xE74C3C, RESTARTING: 0x9B59B6 };
   const logText = logLines.length > 0 ? logLines.join('\n') : 'No activity yet';
@@ -631,17 +660,18 @@ function buildEmbed() {
     .setTitle('🖥️ RDP Ultra Station Control')
     .setColor(colors[state] || 0x99AAB5)
     .addFields(
-      { name: 'Status',    value: state,                                inline: true  },
-      { name: 'Phase',     value: currentPhase,                         inline: true  },
-      { name: 'Saves',     value: String(saveCount),                    inline: true  },
-      { name: 'Remaining', value: remaining + ' min',                   inline: true  },
-      { name: 'TS IP',     value: '`' + tailscaleIp + '`',              inline: true  },
-      { name: 'TG',        value: (tgClient && tgEntity) ? '✅' : '❌',  inline: true  },
+      { name: 'Status',    value: state,                                inline: true },
+      { name: 'Phase',     value: currentPhase,                         inline: true },
+      { name: 'Saves',     value: String(saveCount),                    inline: true },
+      { name: 'Remaining', value: remaining + ' min',                   inline: true },
+      { name: 'TS IP',     value: '`' + tailscaleIp + '`',              inline: true },
+      { name: 'TG',        value: (tgClient && tgEntity) ? '✅' : '❌',  inline: true },
       { name: 'Last',      value: maskSecrets(lastResult),              inline: false },
       { name: 'Log',       value: logText,                              inline: false }
     )
     .setTimestamp();
 }
+
 function buildButtons() {
   return [
     new ActionRowBuilder().addComponents(
@@ -656,6 +686,7 @@ function buildButtons() {
     )
   ];
 }
+
 async function postStatus() {
   if (!controlChannel || !DISCORD_ENABLED) return;
   const payload = { embeds: [buildEmbed()], components: buildButtons() };
@@ -667,6 +698,7 @@ async function postStatus() {
     lastStatusMsg = await controlChannel.send(payload);
   } catch (e) { Logger.warn('Post status failed', { msg: e.message }); }
 }
+
 function updatePanel() {
   if (statusPending) return Promise.resolve();
   statusPending = true;
@@ -677,6 +709,7 @@ function updatePanel() {
   }, 2500);
   return Promise.resolve();
 }
+
 // ═══════════════════════════════════════════════════════
 //  CORE OPERATIONS
 // ═══════════════════════════════════════════════════════
@@ -684,6 +717,7 @@ function killProcessTree(pid) {
   try { execSync('taskkill /PID ' + pid + ' /T /F', { stdio: 'ignore' }); Logger.info('Process killed', { pid }); }
   catch (e) { Logger.warn('Kill process failed', { pid, msg: e.message }); }
 }
+
 function cleanupTempFiles() {
   try {
     const t = process.env.TEMP || process.env.TMP;
@@ -693,6 +727,7 @@ function cleanupTempFiles() {
     Logger.info('Temp files cleaned');
   } catch (e) { Logger.warn('Cleanup failed', { msg: e.message }); }
 }
+
 async function restartTailscale() {
   if (state !== 'IDLE') { lastResult = '⚠️ Busy'; updatePanel(); return; }
   state = 'RESTARTING'; currentPhase = 'Restarting TS';
@@ -741,6 +776,7 @@ async function restartTailscale() {
   }
   state = 'IDLE'; currentPhase = 'IDLE'; updatePanel();
 }
+
 async function killAll() {
   if (state === 'IDLE') { lastResult = 'No op'; updatePanel(); return; }
   if (state === 'CANCELLING') return;
@@ -751,6 +787,7 @@ async function killAll() {
   lastResult = '🛑 Cancelled'; updatePanel();
   Logger.info('Operation cancelled by user');
 }
+
 function pipeLog(proc) {
   if (proc.stdout) proc.stdout.on('data', d => {
     String(d).split('\n').filter(l => l.trim()).forEach(l => { addLog(l.trim().substring(0, 80)); updatePanel(); });
@@ -759,12 +796,20 @@ function pipeLog(proc) {
     String(d).split('\n').filter(l => l.trim()).forEach(l => { addLog('⚠️ ' + l.trim().substring(0, 77)); updatePanel(); });
   });
 }
+
 function runBackup() {
   if (state !== 'IDLE') return;
+  // v6.3: فحص فوري — فشل واضح بدل رمز 64 الغامض
+  if (!fs.existsSync(BACKUP_SCRIPT)) {
+    Logger.error('Backup script missing', { path: BACKUP_SCRIPT });
+    lastResult = '❌ backup.ps1 missing';
+    updatePanel();
+    return;
+  }
   state = 'COMPRESSING'; currentPhase = 'Compressing';
   addLog('🗜️ Backup started'); updatePanel();
   Logger.info('Backup operation started');
-  const proc = spawn('pwsh', ['-ExecutionPolicy', 'Bypass', '-File', BACKUP_SCRIPT], { stdio: 'pipe', windowsHide: true });
+  const proc = spawn('pwsh', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', BACKUP_SCRIPT], { stdio: 'pipe', windowsHide: true });
   currentProc = proc;
   pipeLog(proc);
   const to = setTimeout(function () {
@@ -838,6 +883,7 @@ function runBackup() {
     updatePanel();
   });
 }
+
 // ═══════════════════════════════════════════════════════
 //  TIMEOUT ALERTS & DISCORD INTERACTIONS
 // ═══════════════════════════════════════════════════════
@@ -854,6 +900,7 @@ async function checkTimeoutAlerts() {
     }
   }
 }
+
 client.once('ready', async function () {
   Logger.success('Discord client ready', { guilds: client.guilds.cache.size });
   try {
@@ -865,12 +912,12 @@ client.once('ready', async function () {
   }
   await initializeTelegramAndNotify();
   setInterval(function () { checkTimeoutAlerts().catch(function () {}); }, 30000);
-  // ← FIX: postStatus يعمل فقط إذا Discord متصل
   setInterval(function () {
     if (controlChannel) postStatus().catch(function () {});
     sendTelegramPanel().catch(function () {});
   }, 30000);
 });
+
 client.on('interactionCreate', async function (i) {
   if (!i.isButton()) return;
   try {
@@ -891,9 +938,9 @@ client.on('interactionCreate', async function (i) {
         break;
       case 'btn_status': {
         const remaining = Math.max(0, 360 - Math.floor((Date.now() - WORKFLOW_START) / 60000));
-        const statusText = '**State:** ' + state + '\n**Phase:** ' + currentPhase +
-          '\n**Saves:** ' + saveCount + '\n**Remaining:** ' + remaining +
-          ' min\n**Last:** ' + maskSecrets(lastResult);
+        const statusText = 'State: ' + state + '\nPhase: ' + currentPhase +
+          '\nSaves: ' + saveCount + '\nRemaining: ' + remaining +
+          ' min\nLast: ' + maskSecrets(lastResult);
         await i.followUp({ content: statusText, ephemeral: true });
         break;
       }
@@ -915,6 +962,7 @@ client.on('interactionCreate', async function (i) {
     Logger.error('Button interaction error', { id: i.customId, msg: err.message });
   }
 });
+
 client.on('messageCreate', async function (msg) {
   if (msg.author.bot || msg.channelId !== CHANNEL_ID) return;
   try {
@@ -926,36 +974,41 @@ client.on('messageCreate', async function (msg) {
     Logger.error('Message handler error', { msg: err.message });
   }
 });
+
+// v6.3: معالج موحّد لا يرمي استثناءات أبداً + الصنف الصحيح UpdateBotCallbackQuery
 function registerTelegramHandlers() {
   if (!tgClient) return;
-  tgClient.addEventHandler(async (update) => {
-    try {
-      if (update.message && update.message.message) {
-        const text = update.message.message;
-        if (text.startsWith('!')) await handleCommand(text, 'telegram');
+  try {
+    tgClient.addEventHandler(async (update) => {
+      try {
+        if (!update || !update.className) return;
+        if (update.className === 'UpdateNewMessage') {
+          const text = update.message && update.message.message ? String(update.message.message) : '';
+          if (text.startsWith('!')) await handleCommand(text, 'telegram');
+        } else if (update.className === 'UpdateBotCallbackQuery') {
+          const raw = update.data;
+          const data = Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw || '');
+          await handleTelegramCallback(data);
+          try {
+            await tgClient.invoke(new Api.messages.SetBotCallbackAnswer({ queryId: update.queryId, message: 'Done', alert: false }));
+          } catch (_) {}
+        }
+      } catch (err) {
+        Logger.error('TG update error', { msg: err.message });
       }
-    } catch (err) {
-      Logger.error('TG update error', { msg: err.message });
-    }
-  }, new Api.UpdateNewMessage({}));
-  tgClient.addEventHandler(async (update) => {
-    try {
-      if (update.callbackQuery) {
-        const data = update.callbackQuery.data.toString();
-        await handleTelegramCallback(data);
-        try { await tgClient.answerCallbackQuery(update.callbackQuery.queryId, { message: 'Done' }); } catch (_) {}
-      }
-    } catch (err) {
-      Logger.error('TG callback error', { msg: err.message });
-    }
-  }, new Api.UpdateCallbackQuery({}));
-  Logger.success('Telegram handlers registered');
+    });
+    Logger.success('Telegram handlers registered');
+  } catch (err) {
+    Logger.error('Handler registration failed (non-fatal)', { msg: err.message });
+  }
 }
+
 // ═══════════════════════════════════════════════════════
 //  v6.2 GUARDED SHUTDOWN (single-fire)
 // ═══════════════════════════════════════════════════════
-process.on('unhandledRejection', e => Logger.error('Unhandled rejection', { msg: e.message || e }));
-process.on('uncaughtException',  e => Logger.error('Uncaught exception', { msg: e.message, stack: e.stack }));
+process.on('unhandledRejection', e => Logger.error('Unhandled rejection', { msg: (e && e.message) || e }));
+process.on('uncaughtException', e => Logger.error('Uncaught exception', { msg: e.message, stack: e.stack }));
+
 async function shutdown(reason) {
   if (shuttingDown) return;
   shuttingDown = true;
@@ -989,9 +1042,8 @@ async function startTelegramStandalone() {
   if (pid) tgPanelMsg = { id: pid };
   let sessionInfo = null;
   try {
-    const infoPath = 'C:\\Users\\Public\\session_info.json';
-    if (fs.existsSync(infoPath)) {
-      sessionInfo = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
+    if (fs.existsSync(SESSION_INFO)) {
+      sessionInfo = JSON.parse(fs.readFileSync(SESSION_INFO, 'utf8'));
       if (sessionInfo.tailscaleIp) tailscaleIp = sessionInfo.tailscaleIp;
     }
   } catch (e) { Logger.warn('Session info parse failed', { msg: e.message }); }
